@@ -1,7 +1,7 @@
 {
   "name": "url-shortener",
   "version": "0.1.0",
-  "description": "URL shortener MVP: NestJS, PostgreSQL, Redis",
+  "description": "Link management platform: short links, custom domains, QR codes, analytics, A/B testing",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
@@ -10,47 +10,24 @@
     "node": ">=26.0.0"
   },
   "scripts": {
-    "build": "nest build",
-    "start": "node dist/main.js",
-    "start:dev": "nest start --watch",
-    "migration:run": "node --env-file-if-exists=.env dist/database/run-migrations.js",
-    "lint": "eslint .",
+    "build": "pnpm --recursive run build",
+    "build:contracts": "pnpm --filter @url-shortener/contracts run build",
+    "typecheck": "pnpm run build:contracts && pnpm --recursive run typecheck",
+    "lint": "pnpm run build:contracts && eslint .",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "typecheck": "tsc --noEmit",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:e2e": "vitest run --config vitest.config.e2e.ts"
-  },
-  "dependencies": {
-    "@nestjs/common": "^12.6.2",
-    "@nestjs/config": "^12.1.1",
-    "@nestjs/core": "^12.6.2",
-    "@nestjs/platform-express": "^12.6.2",
-    "@nestjs/typeorm": "^12.0.3",
-    "pg": "^8.23.1",
-    "redis": "^6.4.0",
-    "reflect-metadata": "^0.2.2",
-    "rxjs": "^7.8.2",
-    "typeorm": "^1.1.3",
-    "zod": "^4.6.7"
+    "test": "pnpm run build:contracts && pnpm --recursive run test",
+    "test:e2e": "pnpm run build:contracts && pnpm --filter @url-shortener/api run test:e2e",
+    "migration:run": "pnpm --filter @url-shortener/api run migration:run"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@nestjs/cli": "^12.0.15",
-    "@nestjs/schematics": "^12.0.16",
-    "@nestjs/testing": "^12.6.2",
-    "@types/express": "^5.0.6",
-    "@types/node": "^26.6.11",
-    "@types/supertest": "^7.2.1",
     "eslint": "^10.15.0",
     "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.1.1",
     "globals": "^17.14.0",
     "prettier": "^3.10.1",
-    "supertest": "^7.3.2",
     "typescript": "~6.0.3",
-    "typescript-eslint": "^8.74.0",
-    "vite": "^8.3.8",
-    "vitest": "^5.1.2"
+    "typescript-eslint": "^8.74.0"
   }
 }

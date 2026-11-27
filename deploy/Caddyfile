@@ -1,0 +1,43 @@
+# The edge. It serves the dashboard, proxies the management API, and sends
+# every other host to the redirect service.
+#
+# This is the plain-HTTP setup used locally and in CI. Production adds HTTPS
+# with on-demand certificates for custom domains (docs/PRD.md, section 8).
+{
+	auto_https off
+	admin off
+}
+
+:80 {
+	encode zstd gzip
+
+	# Operational endpoints are never public; they stay on the internal network.
+	@internal path /internal /internal/* /metrics /metrics/* /health /health/*
+	handle @internal {
+		respond 404
+	}
+
+	@app host {$APP_HOST}
+	handle @app {
+		handle /api/* {
+			reverse_proxy {$API_UPSTREAM}
+		}
+		handle {
+			root * /srv
+			try_files {path} /index.html
+			file_server
+		}
+	}
+
+	# Any other host is a short domain: the platform's own or a customer's.
+	# Short domains only redirect; the management API is not served on them.
+	handle {
+		@management path /api/*
+		handle @management {
+			respond 404
+		}
+		handle {
+			reverse_proxy {$API_UPSTREAM}
+		}
+	}
+}
