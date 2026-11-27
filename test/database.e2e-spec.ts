@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { DataSource } from 'typeorm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { isDatabaseUnavailable } from '../src/database/database-unavailable.js';
 import { ClickEvent } from '../src/database/entities/click-event.entity.js';
 import {
   SHORT_CODE_UNIQUE_CONSTRAINT,
@@ -14,6 +15,9 @@ const UNIQUE_VIOLATION = '23505';
 const CHECK_VIOLATION = '23514';
 const FOREIGN_KEY_VIOLATION = '23503';
 const MAX_URL_LENGTH = 2048;
+
+/** A port nothing listens on, so connections are refused immediately. */
+const UNREACHABLE_DATABASE_URL = 'postgres://nobody@localhost:1/nowhere';
 
 describe('database schema', () => {
   let app: NestExpressApplication;
@@ -119,6 +123,42 @@ describe('database schema', () => {
       await expect(
         insertLink({ shortCode: 'aB92xK7', longUrl }),
       ).rejects.toMatchObject({ driverError: { code: CHECK_VIOLATION } });
+    });
+  });
+
+  describe('outage detection', () => {
+    it('recognises a refused connection as an outage', async () => {
+      const unreachable = new DataSource({
+        type: 'postgres',
+        url: UNREACHABLE_DATABASE_URL,
+      });
+
+      const failure: unknown = await unreachable
+        .initialize()
+        .catch((error: unknown) => error);
+
+      expect(isDatabaseUnavailable(failure)).toBe(true);
+    });
+
+    it('recognises a statement cancelled by the timeout as an outage', async () => {
+      const failure: unknown = await dataSource
+        .transaction(async (manager) => {
+          await manager.query('SET LOCAL statement_timeout = 50');
+          await manager.query('SELECT pg_sleep(5)');
+        })
+        .catch((error: unknown) => error);
+
+      expect(isDatabaseUnavailable(failure)).toBe(true);
+    });
+
+    it('does not treat a constraint violation as an outage', async () => {
+      await insertLink({ shortCode: 'launch' });
+
+      const failure: unknown = await insertLink({ shortCode: 'launch' }).catch(
+        (error: unknown) => error,
+      );
+
+      expect(isDatabaseUnavailable(failure)).toBe(false);
     });
   });
 

@@ -64,12 +64,12 @@ describe('health endpoints', () => {
       expect(response.status).toBe(200);
     });
 
-    it('GET /health/ready answers 503 and names Redis', async () => {
+    it('GET /health/ready stays 200, degraded, and names Redis', async () => {
       const response = await request(app.getHttpServer()).get('/health/ready');
 
-      expect(response.status).toBe(503);
+      expect(response.status).toBe(200);
       expect(response.body).toEqual({
-        status: 'unavailable',
+        status: 'degraded',
         checks: { postgres: 'up', redis: 'down' },
       });
     });

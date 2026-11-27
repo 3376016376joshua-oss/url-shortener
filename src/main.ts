@@ -3,10 +3,11 @@ import { ConfigService } from '@nestjs/config';
 import { NestFactory } from '@nestjs/core';
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { AppModule } from './app.module.js';
-import { configureApp } from './app.setup.js';
+import { APP_OPTIONS, configureApp } from './app.setup.js';
 import type { Env } from './config/env.schema.js';
 
 const app = await NestFactory.create<NestExpressApplication>(AppModule, {
+  ...APP_OPTIONS,
   bufferLogs: true,
 });
 const config = app.get<ConfigService<Env, true>>(ConfigService);

@@ -1,7 +1,7 @@
 import type { NestExpressApplication } from '@nestjs/platform-express';
 import { Test, type TestingModuleBuilder } from '@nestjs/testing';
 import { AppModule } from '../../src/app.module.js';
-import { configureApp } from '../../src/app.setup.js';
+import { APP_OPTIONS, configureApp } from '../../src/app.setup.js';
 
 type Customize = (builder: TestingModuleBuilder) => TestingModuleBuilder;
 
@@ -15,7 +15,8 @@ export async function createTestApp(
 ): Promise<NestExpressApplication> {
   const builder = Test.createTestingModule({ imports: [AppModule] });
   const moduleRef = await customize(builder).compile();
-  const app = moduleRef.createNestApplication<NestExpressApplication>();
+  const app =
+    moduleRef.createNestApplication<NestExpressApplication>(APP_OPTIONS);
   configureApp(app);
   await app.init();
   return app;

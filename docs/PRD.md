@@ -19,7 +19,7 @@ The workload is lopsided, and the design follows from that: links are created ra
 
 1. Create a short link for a valid long URL through a JSON API.
 2. Redirect `GET /{code}` with a `302` through a Redis cache-aside read path, with Postgres as the source of truth.
-3. Honour link state on every click: unknown codes return `404`, expired or disabled links return `410`, and a warm cache never keeps a dead link alive.
+3. Honour link state on every click: unknown codes return `404`, expired or disabled links return `410`, and state is evaluated on every request, whether the answer came from the cache or the database.
 4. Let the owner of a link read, edit, disable, and delete it.
 5. Protect the service with rate limits and basic destination checks.
 6. Record click analytics asynchronously, so that analytics can never slow down or break a redirect.
@@ -81,25 +81,25 @@ Requirement ids are stable and are referenced by the acceptance criteria and the
 
 ### A. Clients and entry
 
-| Id  | Requirement                                                                                                                                 | MVP                                 |
-| --- | ------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
-| A-1 | Three public operations: `POST /api/v1/urls` (create), `GET /{code}` (redirect), `PATCH` / `DELETE /api/v1/urls/{code}` (manage).           | Yes                                 |
-| A-2 | Gateway layer applies per-IP and per-key rate limits and answers `429` when exceeded.                                                       | Yes                                 |
-| A-3 | Every request gets a `request_id` (accepted from `X-Request-Id` or generated), echoed in the response header and present in every log line. | Yes                                 |
-| A-4 | Request bodies are capped at 10 kB; a larger body is refused with `413`.                                                                    | Yes                                 |
-| A-5 | `/api/*` authenticates with an API key; `GET /{code}` needs no authentication.                                                              | Yes                                 |
-| A-6 | DNS / geo routing, CDN and TLS termination, L7 load balancing.                                                                              | No - infrastructure outside the app |
+| Id  | Requirement                                                                                                                                                                                                                                                                                         | MVP                                 |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| A-1 | Three public operations: `POST /api/v1/urls` (create), `GET /{code}` (redirect), `PATCH` / `DELETE /api/v1/urls/{code}` (manage).                                                                                                                                                                   | Yes                                 |
+| A-2 | Gateway layer applies per-IP and per-key rate limits and answers `429` when exceeded.                                                                                                                                                                                                               | Yes                                 |
+| A-3 | Every request gets a request id: the caller's `X-Request-Id` when it is 1 to 64 characters of `[A-Za-z0-9._-]`, otherwise a generated UUID. It is echoed in the `X-Request-Id` response header, including on requests rejected before they reach a route, and is present in every request log line. | Yes                                 |
+| A-4 | Request bodies are capped at 10 kB; a larger body is refused with `413`.                                                                                                                                                                                                                            | Yes                                 |
+| A-5 | Link management requires an API key, creation accepts one optionally, and `GET /{code}` never authenticates.                                                                                                                                                                                        | Yes                                 |
+| A-6 | DNS / geo routing, CDN and TLS termination, L7 load balancing.                                                                                                                                                                                                                                      | No - infrastructure outside the app |
 
 ### B. URL creation - write path
 
-| Id  | Requirement                                                                                                                                                                                                                       | MVP |
-| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
-| B-1 | `POST /api/v1/urls` validates, generates or accepts a code, persists the mapping, clears the cache key, and answers `201` with the short URL.                                                                                     | Yes |
-| B-2 | The long URL must parse as an absolute URL, use `http` or `https`, have a host, and be at most 2,048 characters. It is stored in normalised form (lowercase scheme and host). Violations return `400`.                            | Yes |
-| B-3 | Custom alias: 3-32 characters of `[A-Za-z0-9_-]`, not a reserved word, only for authenticated callers. A taken alias returns `409`; a reserved alias returns `422`.                                                               | Yes |
-| B-4 | Expiry policy: authenticated links may never expire (`expiresAt: null`). Anonymous links always expire, at most 365 days out, defaulting to 365 days. An expiry beyond policy returns `422`; an expiry in the past returns `400`. | Yes |
-| B-5 | The owner of a link is the authenticated caller, otherwise `owner_id` is `NULL` (anonymous, read-only forever).                                                                                                                   | Yes |
-| B-6 | A blocked destination returns `422` (see section I).                                                                                                                                                                              | Yes |
+| Id  | Requirement                                                                                                                                                                                                                                                                                                                 | MVP |
+| --- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| B-1 | `POST /api/v1/urls` validates, generates or accepts a code, persists the mapping, clears the cache key, and answers `201` with the short URL.                                                                                                                                                                               | Yes |
+| B-2 | The long URL must parse as an absolute URL, use `http` or `https`, and have a host. It is stored and redirected to in normalised form, which is the WHATWG URL serialisation of the input (lowercase scheme and host, default port removed). The normalised form must be at most 2,048 characters. Violations return `400`. | Yes |
+| B-3 | Custom alias: 3-32 characters of `[A-Za-z0-9_-]`, not a reserved word, only for authenticated callers. A taken alias returns `409`; a reserved alias returns `422`.                                                                                                                                                         | Yes |
+| B-4 | Expiry policy: authenticated links may never expire (`expiresAt: null`). Anonymous links always expire, at most 365 days out, defaulting to 365 days. An expiry beyond policy returns `422`; an expiry in the past returns `400`.                                                                                           | Yes |
+| B-5 | The owner of a link is the authenticated caller, otherwise `owner_id` is `NULL` (anonymous, read-only forever).                                                                                                                                                                                                             | Yes |
+| B-6 | A blocked destination returns `422` (see section I).                                                                                                                                                                                                                                                                        | Yes |
 
 ### C. Short-code generation
 
@@ -118,7 +118,7 @@ Requirement ids are stable and are referenced by the acceptance criteria and the
 | D-1 | Cache-aside: read Redis, on a miss read Postgres and populate Redis.                                                  | Yes |
 | D-2 | Entries carry `status` and `expiresAt`, and both are re-checked on every hit.                                         | Yes |
 | D-3 | Entry TTL is `min(1 hour, time until expiry)`. Unknown codes are negatively cached for 60 seconds.                    | Yes |
-| D-4 | The write path deletes the cache key after every create, update, disable, and delete.                                 | Yes |
+| D-4 | The write path invalidates the cache key after every create, update, disable, and delete (section 9).                 | Yes |
 | D-5 | Stampede protection: concurrent misses for the same code in one process share a single database read (single-flight). | Yes |
 | D-6 | Losing Redis makes redirects slower, never wrong: the read path falls back to Postgres.                               | Yes |
 | D-7 | In-process LRU for hot keys, sharded cluster, replicas, CDN purge.                                                    | No  |
@@ -182,25 +182,25 @@ Requirement ids are stable and are referenced by the acceptance criteria and the
 
 ### J. Reliability and failure handling
 
-| Failure                                                                     | Required behaviour                                                                                                                                                        | MVP |
-| --------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
-| Redis unavailable                                                           | Redirects fall back to Postgres under a 100 ms Redis timeout. Click events are dropped. Rate limiting fails open for `GET /{code}` and fails closed (`503`) for `/api/*`. | Yes |
-| Postgres unavailable                                                        | Cache hits keep redirecting. Cache misses and all writes return `503`.                                                                                                    | Yes |
-| Both unavailable                                                            | Controlled `503`.                                                                                                                                                         | Yes |
-| Unknown code                                                                | `404`, negatively cached for 60 s so scans do not reach Postgres every time.                                                                                              | Yes |
-| Expired / disabled                                                          | `410`, never served from a stale cache entry.                                                                                                                             | Yes |
-| Rate limit exceeded                                                         | `429` with `Retry-After`.                                                                                                                                                 | Yes |
-| Lost cache invalidation                                                     | The write still succeeds (Postgres is the truth); the failure is logged and counted, and staleness is bounded by the 1 hour TTL.                                          | Yes |
-| Autoscaling, multi-AZ, circuit breakers, separate connection pools per path |                                                                                                                                                                           | No  |
+| Failure                                                                     | Required behaviour                                                                                                                                                               | MVP |
+| --------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| Redis unavailable                                                           | Redirects fall back to Postgres under a 100 ms Redis timeout. Click events are dropped. Rate limiting fails open for `GET /{code}` and fails closed (`503`) for `/api/*`.        | Yes |
+| Postgres unavailable                                                        | Cache hits keep redirecting. Cache misses and all writes return `503`.                                                                                                           | Yes |
+| Both unavailable                                                            | Controlled `503`.                                                                                                                                                                | Yes |
+| Unknown code                                                                | `404`, negatively cached for 60 s so scans do not reach Postgres every time.                                                                                                     | Yes |
+| Expired / disabled                                                          | `410`. State is evaluated on every hit, so expiry needs no invalidation, and an owner's change is visible on the next request (section 9 gives the one exception and its bound). | Yes |
+| Rate limit exceeded                                                         | `429` with `Retry-After`.                                                                                                                                                        | Yes |
+| Lost cache invalidation                                                     | The write still succeeds (Postgres is the truth); the failure is logged and counted, and staleness is bounded by the 1 hour TTL.                                                 | Yes |
+| Autoscaling, multi-AZ, circuit breakers, separate connection pools per path |                                                                                                                                                                                  | No  |
 
 ### K. Observability
 
-| Id  | Requirement                                                                      | MVP |
-| --- | -------------------------------------------------------------------------------- | --- |
-| K-1 | `GET /health` (liveness) and `GET /health/ready` (Postgres and Redis reachable). | Yes |
-| K-2 | `GET /metrics` in Prometheus text format with the metrics in section 12.         | Yes |
-| K-3 | Structured JSON logs in production, one record per line, with `request_id`.      | Yes |
-| K-4 | Alert rules, SLO burn alerts, distributed tracing.                               | No  |
+| Id  | Requirement                                                                                                                                                                                                                                                                                    | MVP |
+| --- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --- |
+| K-1 | `GET /health` (liveness, touches no dependency) and `GET /health/ready`, which reports Postgres and Redis individually: `ok` when both are up, `degraded` when one is down (still `200`, because the application keeps serving what it can), `unavailable` with `503` only when both are down. | Yes |
+| K-2 | `GET /metrics` in Prometheus text format with the metrics in section 12.                                                                                                                                                                                                                       | Yes |
+| K-3 | Structured JSON logs in production, one record per line, with `request_id`.                                                                                                                                                                                                                    | Yes |
+| K-4 | Alert rules, SLO burn alerts, distributed tracing.                                                                                                                                                                                                                                             | No  |
 
 ### L. Design considerations at scale
 
@@ -324,12 +324,14 @@ Cache-Control: no-store
 | `400`  | `VALIDATION_FAILED`                                             | Malformed JSON, missing or unknown field, unparseable URL, non-http(s) scheme, URL too long, bad alias shape, expiry not a future timestamp |
 | `401`  | `UNAUTHENTICATED`                                               | Missing credentials where required, an unrecognised key, or an alias requested anonymously                                                  |
 | `403`  | `FORBIDDEN`                                                     | Caller is not the owner, or the link is anonymous                                                                                           |
-| `404`  | `LINK_NOT_FOUND`                                                | Unknown code                                                                                                                                |
+| `404`  | `LINK_NOT_FOUND`, `NOT_FOUND`                                   | Unknown code; or a path that is not an endpoint at all                                                                                      |
 | `409`  | `ALIAS_TAKEN`                                                   | Custom alias already in use                                                                                                                 |
 | `410`  | `LINK_DISABLED`, `LINK_EXPIRED`                                 | Redirect to a disabled or expired link                                                                                                      |
+| `413`  | `PAYLOAD_TOO_LARGE`                                             | Request body over 10 kB                                                                                                                     |
 | `422`  | `DESTINATION_BLOCKED`, `ALIAS_RESERVED`, `EXPIRY_OUT_OF_POLICY` | Well-formed request refused by a business rule                                                                                              |
 | `429`  | `RATE_LIMITED`                                                  | Rate limit exceeded; `Retry-After` header is set                                                                                            |
 | `503`  | `CODE_GENERATION_EXHAUSTED`, `SERVICE_UNAVAILABLE`              | Could not allocate a unique code, or a required dependency is down                                                                          |
+| `500`  | `INTERNAL_ERROR`                                                | Unexpected failure. The body never carries internal detail; the cause is logged with the request id.                                        |
 
 `400` means the request is malformed; `422` means it is well-formed but refused by policy.
 
@@ -337,17 +339,17 @@ Cache-Control: no-store
 
 ### `url_mappings`
 
-| Column        | Type                                    | Notes                                                     |
-| ------------- | --------------------------------------- | --------------------------------------------------------- |
-| `id`          | `BIGINT GENERATED ALWAYS AS IDENTITY`   | Primary key. Never exposed by the API.                    |
-| `short_code`  | `VARCHAR(32) COLLATE "C" NOT NULL`      | `UNIQUE`. Case-sensitive. Generated code or custom alias. |
-| `long_url`    | `TEXT NOT NULL`                         | `CHECK (char_length(long_url) <= 2048)`                   |
-| `owner_id`    | `VARCHAR(64) NULL`                      | `NULL` means anonymous.                                   |
-| `status`      | `VARCHAR(16) NOT NULL DEFAULT 'ACTIVE'` | `CHECK (status IN ('ACTIVE', 'DISABLED'))`                |
-| `expires_at`  | `TIMESTAMPTZ NULL`                      | `NULL` means never.                                       |
-| `click_count` | `BIGINT NOT NULL DEFAULT 0`             | Rolled up by the analytics consumer.                      |
-| `created_at`  | `TIMESTAMPTZ NOT NULL DEFAULT now()`    |                                                           |
-| `updated_at`  | `TIMESTAMPTZ NOT NULL DEFAULT now()`    |                                                           |
+| Column        | Type                                    | Notes                                                                            |
+| ------------- | --------------------------------------- | -------------------------------------------------------------------------------- |
+| `id`          | `BIGINT GENERATED ALWAYS AS IDENTITY`   | Primary key. Never exposed by the API.                                           |
+| `short_code`  | `VARCHAR(32) COLLATE "C" NOT NULL`      | `UNIQUE`. Case-sensitive. Generated code or custom alias.                        |
+| `long_url`    | `TEXT NOT NULL`                         | `CHECK (char_length(long_url) <= 2048)`                                          |
+| `owner_id`    | `VARCHAR(64) NULL`                      | `NULL` means anonymous.                                                          |
+| `status`      | `VARCHAR(16) NOT NULL DEFAULT 'ACTIVE'` | `CHECK (status IN ('ACTIVE', 'DISABLED'))`                                       |
+| `expires_at`  | `TIMESTAMPTZ NULL`                      | `NULL` means never.                                                              |
+| `click_count` | `BIGINT NOT NULL DEFAULT 0`             | Rolled up by the analytics consumer.                                             |
+| `created_at`  | `TIMESTAMPTZ NOT NULL DEFAULT now()`    |                                                                                  |
+| `updated_at`  | `TIMESTAMPTZ NOT NULL DEFAULT now()`    | Changes only when the owner edits the link. The click roll-up must not touch it. |
 
 Two deliberate differences from the diagram:
 
@@ -418,20 +420,22 @@ The effective state is computed from the stored row, in this order:
 
 ### Cache entries
 
-|                           |                                                                                         |
-| ------------------------- | --------------------------------------------------------------------------------------- |
-| Key                       | `short:{code}`                                                                          |
-| Value for a link          | JSON `{ "id": "42", "longUrl": "...", "status": "ACTIVE", "expiresAt": "..." \| null }` |
-| Value for an unknown code | JSON `{ "notFound": true }`                                                             |
-| TTL for a link            | `min(3600 s, seconds until expires_at)`; an already expired link is cached for 60 s     |
-| TTL for an unknown code   | 60 s                                                                                    |
+|                             |                                                                                         |
+| --------------------------- | --------------------------------------------------------------------------------------- |
+| Key                         | `short:{code}`                                                                          |
+| Value for a link            | JSON `{ "id": "42", "longUrl": "...", "status": "ACTIVE", "expiresAt": "..." \| null }` |
+| Value for an unknown code   | JSON `{ "notFound": true }`                                                             |
+| Value after an invalidation | JSON `{ "invalidated": true }`, a tombstone                                             |
+| TTL for a link              | `min(3600 s, seconds until expires_at)`; an already expired link is cached for 60 s     |
+| TTL for an unknown code     | 60 s                                                                                    |
+| TTL for a tombstone         | 5 s                                                                                     |
 
 ### Rules
 
-1. **Read**: `GET` the key. On a hit, compute the effective state from the cached value and answer. On a miss, read Postgres, `SET` with the TTL above, then answer.
+1. **Read**: `GET` the key. On a hit, compute the effective state from the cached value and answer. On a miss, read Postgres, populate with `SET ... NX` and the TTL above, then answer. A tombstone counts as a miss that is answered from Postgres and is not populated.
 2. **A hit is not a free pass**: status and expiry are evaluated on every request, cached or not. A link that expires while cached returns `410` at the moment it expires.
-3. **Write**: commit to Postgres first, then `DEL` the key. The next read repopulates it. Creation also deletes the key, which clears a negative entry left by earlier probes of a not-yet-created alias.
-4. **Lost invalidation**: if the `DEL` fails, the write still succeeds, the failure is logged and counted, and the 1 hour TTL bounds how long a stale entry can live. The TTL is deliberately shorter than the diagram's 24 hour example because it is the only bound on that failure.
+3. **Write**: commit to Postgres first, then overwrite the key with a tombstone. Creation does the same, which clears a negative entry left by earlier probes of a not-yet-created alias. The tombstone exists because a plain `DEL` loses a race: a reader that read the old row before the commit could write it back after the `DEL` and keep a disabled link alive for the full TTL. With a tombstone in place that reader's `SET ... NX` fails, and after 5 seconds, which is longer than any read can take under the timeouts in section 11, the next miss repopulates from the committed row.
+4. **Lost invalidation**: this is the one case where a stale entry can be served. If writing the tombstone fails (Redis unreachable at that moment), the write still succeeds because Postgres is the truth, the failure is logged and counted, and the 1 hour TTL bounds how long the stale entry can live. The TTL is deliberately shorter than the diagram's 24 hour example because it is the only bound on that failure.
 5. **Stampede**: concurrent misses for one code in one process share one database read.
 6. **Redis errors**: any Redis error or timeout on the read path is treated as a miss, and the request is answered from Postgres.
 
@@ -439,19 +443,21 @@ The effective state is computed from the stored row, in this order:
 
 ### Rate limits
 
-Fixed 60 second windows, counted in Redis with an atomic increment-and-expire.
+Fixed 60 second windows, counted in Redis with an atomic increment-and-expire. Each limit is set by the environment variable in the last column.
 
-| Policy        | Applies to                                 | Keyed by                     | Limit per minute |
-| ------------- | ------------------------------------------ | ---------------------------- | ---------------- |
-| `redirect`    | `GET /{code}`                              | Client IP                    | 300              |
-| `api`         | Every `/api/v1/*` request                  | Client IP                    | 120              |
-| `create-anon` | `POST /api/v1/urls` without credentials    | Client IP                    | 10               |
-| `api-key`     | Every `/api/v1/*` request with credentials | SHA-256 of the presented key | 300              |
+| Policy        | Applies to                                 | Keyed by                     | Default per minute | Variable                            |
+| ------------- | ------------------------------------------ | ---------------------------- | ------------------ | ----------------------------------- |
+| `redirect`    | `GET /{code}`                              | Client IP                    | 300                | `RATE_LIMIT_REDIRECT_PER_MINUTE`    |
+| `api`         | Every `/api/v1/*` request                  | Client IP                    | 120                | `RATE_LIMIT_API_PER_MINUTE`         |
+| `create-anon` | `POST /api/v1/urls` without credentials    | Client IP                    | 10                 | `RATE_LIMIT_CREATE_ANON_PER_MINUTE` |
+| `api-key`     | Every `/api/v1/*` request with credentials | SHA-256 of the presented key | 300                | `RATE_LIMIT_API_KEY_PER_MINUTE`     |
 
 - A request must pass every policy that applies to it.
 - A rejected request gets `429 RATE_LIMITED` with `Retry-After` set to the seconds left in the window.
-- Limiting runs before authentication, so guessing API keys is itself rate limited.
-- The client IP honours `TRUST_PROXY_HOPS`, so limits stay correct behind a load balancer.
+- The limiter is a global guard and authentication is a guard on the link controllers, so limiting always runs first and guessing API keys is itself rate limited.
+- A request the body parser rejects (malformed JSON, over 10 kB) is answered before the limiter and is not counted.
+- The client IP honours `TRUST_PROXY_HOPS`, so limits stay correct behind a load balancer. An IPv6 client is keyed by its /64 prefix, because one subscriber controls a whole /64.
+- The policies are one injectable provider built from configuration, so the limiter's own tests can use small limits and a short window. The shared end-to-end environment sets every limit high enough that no other suite can trip one.
 - `/health*` and `/metrics` are exempt.
 - If Redis is unavailable the limiter fails open for `GET /{code}` (availability of the redirect comes first) and fails closed with `503` for `/api/v1/*`.
 
@@ -468,14 +474,14 @@ flowchart LR
 
 - **Producer**: runs after the redirect decision, is never awaited by the response, and never throws. On any failure the event is dropped and counted.
 - **Stream**: capped at about 100,000 entries. When the consumer falls that far behind, the oldest events are discarded rather than letting Redis grow without bound.
-- **Consumer**: one consumer group, running inside the application process on its own Redis connection. It reads batches of up to 500, and in a single transaction inserts them with `ON CONFLICT (event_id) DO NOTHING` and adds the number of rows actually inserted to `url_mappings.click_count`. It acknowledges only after the commit. Events for links that no longer exist are acknowledged and discarded. Entries left pending by a crashed consumer are reclaimed after 60 seconds.
+- **Consumer**: one consumer group, running inside the application process on its own Redis connection. It reads batches of up to 500, and in a single transaction inserts them with `ON CONFLICT (event_id) DO NOTHING` and adds the number of rows actually inserted to `url_mappings.click_count`. It acknowledges only after the commit. Events for links that no longer exist are acknowledged and discarded. Entries left pending by a crashed consumer are reclaimed after 60 seconds. The roll-up is a plain SQL increment that leaves `updated_at` alone. The consumer creates its group when it is missing, at start-up and whenever Redis reports it gone, so a Redis that restarted empty does not stop analytics.
 - **Consistency**: at-least-once delivery, exactly-once effect through `event_id`. Stats lag the click by seconds.
 - **Privacy**: an event carries the link id, timestamp, referrer host, and user-agent class (`desktop`, `mobile`, `bot`, `other`). No IP address is stored anywhere.
 - Only `302` responses produce events. `404`, `410`, and `429` do not.
 
 ## 11. Non-functional targets
 
-Measured on the Docker Compose stack on a developer machine, at the application (not including network to the client).
+Measured on the Docker Compose stack on a developer machine, at the application (not including network to the client). The latency and hit-ratio rows are design targets checked by hand against the metrics in section 12; they are not gated in CI.
 
 | Target                          | Value                                                                                        |
 | ------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -511,18 +517,22 @@ Route labels use the route pattern (`/:code`), never the actual code, to keep ca
 ## 13. Configuration
 
 Deployment-specific values come from the environment and are validated at start-up; the application refuses to boot on an invalid configuration.
-Policy numbers in this document (TTLs, limits, lengths, retry counts) are named constants in the module that owns them.
+Other policy numbers in this document (TTLs, lengths, retry counts, window length) are named constants in the module that owns them.
 
-| Variable           | Required | Default                 | Meaning                                                                            |
-| ------------------ | -------- | ----------------------- | ---------------------------------------------------------------------------------- |
-| `NODE_ENV`         | No       | `development`           | `development`, `test`, or `production`                                             |
-| `PORT`             | No       | `3000`                  | HTTP port                                                                          |
-| `BASE_URL`         | No       | `http://localhost:3000` | Public origin used to build `shortUrl` and to detect self-referencing destinations |
-| `DATABASE_URL`     | Yes      |                         | Postgres connection string                                                         |
-| `REDIS_URL`        | Yes      |                         | Redis connection string                                                            |
-| `TRUST_PROXY_HOPS` | No       | `0`                     | Number of trusted reverse proxies in front of the app, for the client IP           |
-| `API_KEYS`         | No       | empty                   | Comma-separated `ownerId:key` pairs                                                |
-| `BLOCKED_HOSTS`    | No       | empty                   | Comma-separated hosts refused as destinations, subdomains included                 |
+| Variable                            | Required | Default                 | Meaning                                                                                                                                                                               |
+| ----------------------------------- | -------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NODE_ENV`                          | No       | `development`           | `development`, `test`, or `production`                                                                                                                                                |
+| `PORT`                              | No       | `3000`                  | HTTP port                                                                                                                                                                             |
+| `BASE_URL`                          | No       | `http://localhost:3000` | Public origin used to build `shortUrl` and to detect self-referencing destinations                                                                                                    |
+| `DATABASE_URL`                      | Yes      |                         | Postgres connection string                                                                                                                                                            |
+| `REDIS_URL`                         | Yes      |                         | Redis connection string                                                                                                                                                               |
+| `TRUST_PROXY_HOPS`                  | No       | `0`                     | Number of trusted reverse proxies in front of the app, for the client IP                                                                                                              |
+| `API_KEYS`                          | No       | empty                   | Comma-separated `ownerId:key` pairs. Owner ids are 1 to 64 characters of `[A-Za-z0-9_-]`; keys are 16 to 128 URL-safe characters and must be unique. One owner may have several keys. |
+| `BLOCKED_HOSTS`                     | No       | empty                   | Comma-separated host names refused as destinations, subdomains included                                                                                                               |
+| `RATE_LIMIT_REDIRECT_PER_MINUTE`    | No       | `300`                   | Section 10                                                                                                                                                                            |
+| `RATE_LIMIT_API_PER_MINUTE`         | No       | `120`                   | Section 10                                                                                                                                                                            |
+| `RATE_LIMIT_CREATE_ANON_PER_MINUTE` | No       | `10`                    | Section 10                                                                                                                                                                            |
+| `RATE_LIMIT_API_KEY_PER_MINUTE`     | No       | `300`                   | Section 10                                                                                                                                                                            |
 
 ## 14. Technology decisions
 
@@ -544,7 +554,7 @@ The MVP is done when all of these pass as automated end-to-end tests against rea
 
 | Id    | Criterion                                                                                                                                                                                      | Covers             |
 | ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| AC-1  | `POST /api/v1/urls` with a valid URL returns `201` and a 7 character Base62 `shortCode`; `GET /{shortCode}` then returns `302` with the exact `Location`.                                      | B-1, C-1, F-1      |
+| AC-1  | `POST /api/v1/urls` with a valid URL returns `201` and a 7 character Base62 `shortCode`; `GET /{shortCode}` then returns `302` with `Location` equal to the normalised long URL.               | B-1, B-2, C-1, F-1 |
 | AC-2  | Invalid input returns `400`: missing `longUrl`, `ftp://` scheme, 2,049 character URL, unknown property, malformed alias, past `expiresAt`.                                                     | B-2, B-3, B-4      |
 | AC-3  | An authenticated create with a free alias returns `201` with that alias; the same alias again returns `409 ALIAS_TAKEN`; a reserved alias returns `422`; an anonymous alias returns `401`.     | B-3, C-4, I-4      |
 | AC-4  | A blocklisted host, the shortener's own host, and `http://127.0.0.1/` each return `422 DESTINATION_BLOCKED`.                                                                                   | I-2                |
@@ -556,11 +566,11 @@ The MVP is done when all of these pass as automated end-to-end tests against rea
 | AC-10 | After `DELETE` the redirect returns `404`, and the alias can be created again with zero clicks.                                                                                                | G-3                |
 | AC-11 | Management without credentials returns `401`; with another owner's key, or on an anonymous link, `403`.                                                                                        | G-5                |
 | AC-12 | An anonymous link gets an expiry of at most 365 days; an anonymous request for a longer expiry returns `422`.                                                                                  | B-4                |
-| AC-13 | Exceeding a rate limit returns `429` with `Retry-After`; requests succeed again in the next window.                                                                                            | A-2, I-1           |
+| AC-13 | Exceeding a rate limit returns `429` with `Retry-After`; once the window has passed, requests succeed again (tested with a shortened window).                                                  | A-2, I-1           |
 | AC-14 | N redirects produce `totalClicks = N` in the stats endpoint within 5 s, and replaying the same events does not change the count.                                                               | H-1, H-3, H-4, H-6 |
 | AC-15 | With Redis stopped, redirects of existing links still return `302` and no error is surfaced to the visitor.                                                                                    | D-6, H-2, J        |
 | AC-16 | With Postgres stopped, a cached link still redirects and an uncached code returns `503`.                                                                                                       | F-7, J             |
-| AC-17 | `GET /health` returns `200`; `GET /health/ready` returns `200` when both dependencies are up and `503` when either is down.                                                                    | K-1                |
+| AC-17 | `GET /health` returns `200`. `GET /health/ready` returns `200 ok` with both dependencies up, `200 degraded` naming the one that is down, and `503` when both are down.                         | K-1                |
 | AC-18 | `GET /metrics` exposes every metric in section 12.                                                                                                                                             | K-2                |
 | AC-19 | Every response carries `X-Request-Id`, and an incoming one is echoed.                                                                                                                          | A-3                |
 | AC-20 | (Manual) From a clean checkout, `docker compose up` brings up Postgres, Redis, and a healthy application.                                                                                      | Goal 7             |
@@ -590,12 +600,12 @@ Each workstream owns its directories outright and codes against the contracts be
 
 ### Ownership
 
-| Workstream           | Owns                                                                                                                                                                                | Delivers                                                                                                                                                                                                              |
-| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Foundation (phase 1) | `src/main.ts`, `src/app.module.ts`, `src/app.setup.ts`, `src/config`, `src/database`, `src/redis`, `src/health`, `src/common/errors`, `src/common/link`, `test/support`, Docker, CI | Skeleton, schema, contracts, stubs, body limit (A-4), health endpoints (K-1)                                                                                                                                          |
-| (a) Write path       | `src/links`, `test/links*.e2e-spec.ts`                                                                                                                                              | API key authentication and owner authorisation, `POST` / `GET` / `PATCH` / `DELETE /api/v1/urls`, validation and business rules, code generation, risk checks, stats endpoint. Requirements B, C, G, I-2 to I-5, H-6. |
-| (b) Read path        | `src/redirect`, `src/link-cache`, `test/redirect*.e2e-spec.ts`                                                                                                                      | `GET /{code}`, cache-aside with negative cache and single-flight, state and expiry semantics, the real `LinkCacheInvalidator`, degraded modes. Requirements D, F, G-6, J (read path).                                 |
-| (c) Ops              | `src/analytics`, `src/common/rate-limit`, `src/common/metrics`, `src/common/request-id`, `test/ops*.e2e-spec.ts`                                                                    | Rate limiting, request id, click producer and consumer, the real `ClickRecorder`, the real `Metrics` and `GET /metrics`, structured request logging. Requirements A-2, A-3, H-1 to H-5, I-1, K-2, K-3.                |
+| Workstream           | Owns                                                                                                                                                                                            | Delivers                                                                                                                                                                                                                   |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Foundation (phase 1) | `src/main.ts`, `src/app.module.ts`, `src/app.setup.ts`, `src/config`, `src/database`, `src/redis`, `src/health`, `src/http`, `src/common/errors`, `src/common/link`, `test/support`, Docker, CI | Skeleton, schema, contracts, stubs, request id (A-3), body limit (A-4), the error body for every failure including `503` on a database outage, health endpoints (K-1)                                                      |
+| (a) Write path       | `src/links`, `test/links*.e2e-spec.ts`                                                                                                                                                          | API key authentication and owner authorisation, `POST` / `GET` / `PATCH` / `DELETE /api/v1/urls`, validation and business rules, code generation, risk checks, stats endpoint. Requirements A-5, B, C, G, I-2 to I-5, H-6. |
+| (b) Read path        | `src/redirect`, `src/link-cache`, `test/redirect*.e2e-spec.ts`                                                                                                                                  | `GET /{code}`, cache-aside with negative cache and single-flight, state and expiry semantics, the real `LinkCacheInvalidator`, degraded modes. Requirements D, F, G-6, J (read path).                                      |
+| (c) Ops              | `src/analytics`, `src/common/rate-limit`, `src/common/metrics`, `test/ops*.e2e-spec.ts`                                                                                                         | Rate limiting, click producer and consumer, the real `ClickRecorder`, the real `Metrics` and `GET /metrics`, request logging that carries the request id. Requirements A-2, H-1 to H-5, I-1, K-2, K-3.                     |
 
 The stats endpoint belongs to (a) because it is an owner-scoped link resource and only reads tables the foundation defines, which keeps (c) free of any dependency on authentication.
 
@@ -654,33 +664,31 @@ export abstract class ClickRecorder {
 // src/common/metrics/metrics.ts
 export abstract class Metrics {
   abstract incrementCounter(
-    name: MetricName,
-    labels?: Record<string, string>,
-  ): void;
-  abstract observeDuration(
-    name: MetricName,
-    seconds: number,
+    name: CounterName,
     labels?: Record<string, string>,
   ): void;
 }
 ```
 
-`MetricName` is the closed set of names in section 12. HTTP duration and rate-limit metrics are recorded by (c) itself; (a) and (b) only emit their own domain counters.
+`CounterName` is the closed set of counters the write and read paths emit: `redirects_total`, `link_cache_lookups_total`, `link_cache_invalidation_failures_total`, `links_created_total`, and `short_code_collisions_total`. Every other metric in section 12 is recorded inside (c) and needs no shared contract.
 
 **Shared data and rules - owned by the foundation**
 
-| Contract                                                            | Location                        |
-| ------------------------------------------------------------------- | ------------------------------- |
-| `UrlMapping` and `ClickEvent` entities, and the schema in section 7 | `src/database/entities`         |
-| `ApiException` and `ErrorCode` (the error body in section 6)        | `src/common/errors`             |
-| Code alphabet, code pattern, generated length, reserved words       | `src/common/link/short-code.ts` |
-| `resolveLinkState()` (the state rules in section 9)                 | `src/common/link/link-state.ts` |
-| `REDIS_CLIENT` injection token and `RedisClient` type               | `src/redis/redis-client.ts`     |
+| Contract                                                                                                                                                                                                                                               | Location                                           |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------------------------------------------------- |
+| `UrlMapping` and `ClickEvent` entities, and the schema in section 7                                                                                                                                                                                    | `src/database/entities`                            |
+| `ApiException` and `ErrorCode` (the error body in section 6)                                                                                                                                                                                           | `src/common/errors`                                |
+| The global error filter: throw `ApiException` for anything in section 6, and let database errors propagate, because the filter answers an outage (`isDatabaseUnavailable`) with `503 SERVICE_UNAVAILABLE` and anything unexpected with a generic `500` | `src/http`, `src/database/database-unavailable.ts` |
+| `getRequestId(request)`                                                                                                                                                                                                                                | `src/http/request-id.middleware.ts`                |
+| Code alphabet, code pattern, generated length, reserved words                                                                                                                                                                                          | `src/common/link/short-code.ts`                    |
+| `resolveLinkState()` (the state rules in section 9)                                                                                                                                                                                                    | `src/common/link/link-state.ts`                    |
+| `REDIS_CLIENT` injection token and `RedisClient` type                                                                                                                                                                                                  | `src/redis/redis-client.ts`                        |
 
 ### Rules for working in parallel
 
-1. Stay inside the directories you own. A change to a foundation-owned file or to a contract is a deliberate, called-out change in the pull request, never a drive-by.
-2. `RedirectModule` is registered last in `AppModule` because `GET /:code` matches any single-segment path.
-3. A schema change is a new migration file, appended to `src/database/migrations/index.ts`. Existing migrations are never edited.
-4. Each workstream adds its own end-to-end spec files and reuses `test/support`: `createTestApp()` boots the whole application (and takes provider overrides), `resetState()` empties Postgres and Redis between tests.
-5. Until a real implementation merges, the stub behind each contract is a no-op, so every workstream's tests pass on their own.
+1. I-6 applies to everyone: never log a full long URL. Log the short code and the destination host.
+2. Stay inside the directories you own. A change to a foundation-owned file or to a contract is a deliberate, called-out change in the pull request, never a drive-by.
+3. `RedirectModule` is registered last in `AppModule` because `GET /:code` matches any single-segment path.
+4. A schema change is a new migration file, appended to `src/database/migrations/index.ts`. Existing migrations are never edited.
+5. Each workstream adds its own end-to-end spec files and reuses `test/support`: `createTestApp()` boots the whole application (and takes provider overrides), `resetState()` empties Postgres and Redis between tests.
+6. Until a real implementation merges, the stub behind each contract is a no-op, so every workstream's tests pass on their own.

@@ -30,25 +30,25 @@ describe('HealthService', () => {
     });
   });
 
-  it('is unavailable and names Postgres when Postgres is down', async () => {
+  it('is degraded and names Postgres when only Postgres is down', async () => {
     const service = createService({ postgres: down, redis: up });
 
     await expect(service.checkReadiness()).resolves.toEqual({
-      status: 'unavailable',
+      status: 'degraded',
       checks: { postgres: 'down', redis: 'up' },
     });
   });
 
-  it('is unavailable and names Redis when Redis is down', async () => {
+  it('is degraded and names Redis when only Redis is down', async () => {
     const service = createService({ postgres: up, redis: down });
 
     await expect(service.checkReadiness()).resolves.toEqual({
-      status: 'unavailable',
+      status: 'degraded',
       checks: { postgres: 'up', redis: 'down' },
     });
   });
 
-  it('reports both when both are down', async () => {
+  it('is unavailable when both are down', async () => {
     const service = createService({ postgres: down, redis: down });
 
     await expect(service.checkReadiness()).resolves.toEqual({

@@ -14,7 +14,7 @@ services:
       POSTGRES_PASSWORD: shortener
       POSTGRES_DB: shortener
     ports:
-      - '${POSTGRES_PORT:-5432}:5432'
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
     volumes:
       - postgres-data:/var/lib/postgresql
     healthcheck:
@@ -26,7 +26,7 @@ services:
   redis:
     image: redis:8-alpine
     ports:
-      - '${REDIS_PORT:-6379}:6379'
+      - '127.0.0.1:${REDIS_PORT:-6379}:6379'
     healthcheck:
       test: ['CMD', 'redis-cli', 'ping']
       interval: 2s
@@ -50,6 +50,9 @@ services:
       BASE_URL: http://localhost:${APP_PORT:-3000}
       DATABASE_URL: *database-url
       REDIS_URL: redis://redis:6379
+      # A key for trying the owner API locally. Set API_KEYS to replace it.
+      API_KEYS: ${API_KEYS:-demo:local-development-key}
+      BLOCKED_HOSTS: ${BLOCKED_HOSTS:-}
     ports:
       - '${APP_PORT:-3000}:3000'
     depends_on:

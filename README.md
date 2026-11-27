@@ -25,9 +25,11 @@ curl http://localhost:3000/health/ready
 
 If a default port is taken, move it: `APP_PORT=3001 POSTGRES_PORT=5433 REDIS_PORT=6380 docker compose up`.
 
+The stack starts with one API key for trying the owner endpoints locally: `Authorization: Bearer local-development-key` (owner `demo`). Set `API_KEYS` to replace it.
+
 ## Develop
 
-Requires Node.js 24.11 or newer (see `.nvmrc`) and pnpm.
+Requires Node.js 26 (see `.nvmrc`) and pnpm.
 
 ```sh
 pnpm install
@@ -49,11 +51,13 @@ pnpm start:dev                        # run the app with reload
 End-to-end tests run the whole application against the Postgres and Redis from Docker Compose.
 They use their own database (`shortener_test`, rebuilt from the migrations on every run) and their own Redis logical database, so they never touch development data.
 They honour the same `POSTGRES_PORT` and `REDIS_PORT` overrides as Compose.
+A run holds a lock in Postgres from start to finish, so two runs against the same Postgres take turns instead of interfering.
 
 ### Several checkouts on one machine
 
-Every checkout of this repository has the same directory name, so Docker Compose gives them the same project name and they would share containers.
-Give each one its own project name and ports, and export them so the tests see the same ports:
+Every checkout of this repository has the same directory name, so Docker Compose gives them the same project name and they share containers.
+That is safe for the end-to-end tests, which then simply queue behind each other, but not for running the application itself.
+To work independently, give each checkout its own project name and ports, and export them so the tests see the same ports:
 
 ```sh
 export COMPOSE_PROJECT_NAME=url-shortener-links APP_PORT=3001 POSTGRES_PORT=5433 REDIS_PORT=6380
@@ -69,6 +73,7 @@ pnpm test:e2e
 | `src/database`   | Entities, migrations, and the migration runner             |
 | `src/redis`      | The shared Redis client                                    |
 | `src/health`     | Liveness and readiness endpoints                           |
+| `src/http`       | Request id and the error body for every failed request     |
 | `src/common`     | Error contract, link rules, metrics and rate-limit modules |
 | `src/links`      | Create and manage API (write path)                         |
 | `src/redirect`   | The redirect (read path)                                   |

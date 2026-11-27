@@ -19,4 +19,10 @@ export const testEnv = {
   DATABASE_URL: `${postgresServer}/${TEST_DATABASE_NAME}`,
   REDIS_URL: `redis://localhost:${redisPort}/${TEST_REDIS_DATABASE}`,
   BASE_URL: 'http://sho.rt.test',
+  // High enough that no suite trips a limit by accident. The rate-limit
+  // tests set their own small limits.
+  RATE_LIMIT_REDIRECT_PER_MINUTE: '1000000',
+  RATE_LIMIT_API_PER_MINUTE: '1000000',
+  RATE_LIMIT_CREATE_ANON_PER_MINUTE: '1000000',
+  RATE_LIMIT_API_KEY_PER_MINUTE: '1000000',
 };

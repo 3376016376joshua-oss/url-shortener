@@ -4,8 +4,15 @@ import { REDIS_CLIENT, type RedisClient } from '../redis/redis-client.js';
 
 export type DependencyStatus = 'up' | 'down';
 
+/**
+ * `degraded` means one dependency is down and the application still serves
+ * what it can: redirects from Postgres without Redis, or cached redirects
+ * without Postgres. `unavailable` means it can serve nothing.
+ */
+export type ReadinessStatus = 'ok' | 'degraded' | 'unavailable';
+
 export interface ReadinessReport {
-  status: 'ok' | 'unavailable';
+  status: ReadinessStatus;
   checks: { postgres: DependencyStatus; redis: DependencyStatus };
 }
 
@@ -23,9 +30,8 @@ export class HealthService {
       this.probe('postgres', () => this.dataSource.query('SELECT 1')),
       this.probe('redis', () => this.redis.ping()),
     ]);
-    const ready = postgres === 'up' && redis === 'up';
     return {
-      status: ready ? 'ok' : 'unavailable',
+      status: summarise([postgres, redis]),
       checks: { postgres, redis },
     };
   }
@@ -42,4 +48,12 @@ export class HealthService {
       return 'down';
     }
   }
+}
+
+function summarise(dependencies: DependencyStatus[]): ReadinessStatus {
+  const down = dependencies.filter((status) => status === 'down').length;
+  if (down === 0) {
+    return 'ok';
+  }
+  return down === dependencies.length ? 'unavailable' : 'degraded';
 }
