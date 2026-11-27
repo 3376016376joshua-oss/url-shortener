@@ -1,0 +1,3 @@
+# Refuse versions published less than a day ago, so a compromised release
+# has time to be caught and pulled before it can reach this project.
+minimumReleaseAge: 1440

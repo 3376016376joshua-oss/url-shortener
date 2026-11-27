@@ -1,0 +1,79 @@
+# One command brings up the whole stack: docker compose up
+#
+# Host ports can be moved when the defaults are taken, for example
+#   APP_PORT=3001 POSTGRES_PORT=5433 REDIS_PORT=6380 docker compose up
+# The credentials below are for local development only.
+
+x-database-url: &database-url postgres://shortener:shortener@postgres:5432/shortener
+
+services:
+  postgres:
+    image: postgres:18-alpine
+    environment:
+      POSTGRES_USER: shortener
+      POSTGRES_PASSWORD: shortener
+      POSTGRES_DB: shortener
+    ports:
+      - '127.0.0.1:${POSTGRES_PORT:-5432}:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready --username shortener --dbname shortener']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  redis:
+    image: redis:8-alpine
+    ports:
+      - '127.0.0.1:${REDIS_PORT:-6379}:6379'
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  # Applies pending migrations, then exits. The app starts only if it succeeds.
+  migrate:
+    build: .
+    command: ['node', 'dist/database/run-migrations.js']
+    environment:
+      DATABASE_URL: *database-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  app:
+    build: .
+    environment:
+      PORT: 3000
+      BASE_URL: http://localhost:${APP_PORT:-3000}
+      DATABASE_URL: *database-url
+      REDIS_URL: redis://redis:6379
+      # A key for trying the owner API locally. Set API_KEYS to replace it.
+      API_KEYS: ${API_KEYS:-demo:local-development-key}
+      BLOCKED_HOSTS: ${BLOCKED_HOSTS:-}
+    ports:
+      - '${APP_PORT:-3000}:3000'
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'wget',
+          '--quiet',
+          '--spider',
+          'http://127.0.0.1:3000/health/ready',
+        ]
+      interval: 5s
+      timeout: 3s
+      start_period: 20s
+      start_interval: 1s
+      retries: 5
+
+volumes:
+  postgres-data:
