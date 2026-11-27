@@ -71,7 +71,7 @@ jobs:
         # No link exists yet, so the API's own 404 body is the proof.
         run: >-
           curl --silent --show-error --header 'Host: sho.localhost'
-          http://localhost:8080/abc1234 | grep --quiet '"code":"NOT_FOUND"'
+          http://localhost:8080/abc1234 | grep --quiet '"code":"LINK_NOT_FOUND"'
       - name: The edge keeps operational endpoints private
         run: |
           for host in localhost sho.localhost; do
