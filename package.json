@@ -18,6 +18,7 @@
     "format:check": "prettier --check .",
     "test": "pnpm run build:contracts && pnpm --recursive run test",
     "test:e2e": "pnpm run build:contracts && pnpm --filter @url-shortener/api run test:e2e",
+    "test:web:e2e": "pnpm run build:contracts && pnpm --filter @url-shortener/web run test:e2e",
     "migration:run": "pnpm --filter @url-shortener/api run migration:run"
   },
   "devDependencies": {
