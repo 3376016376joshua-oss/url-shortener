@@ -1,0 +1,29 @@
+@import 'tailwindcss';
+
+@layer base {
+  html {
+    color-scheme: light;
+  }
+
+  body {
+    background-color: var(--color-slate-50);
+    color: var(--color-slate-900);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  /*
+   * One focus indicator for every control, visible on any background the
+   * dashboard uses. Shown for keyboard focus only.
+   */
+  :focus-visible {
+    outline: 2px solid var(--color-indigo-600);
+    outline-offset: 2px;
+  }
+
+  /* Preflight makes every button look inert; a pointer says it is not. */
+  button:not(:disabled),
+  [role='button']:not(:disabled) {
+    cursor: pointer;
+  }
+}
