@@ -58,13 +58,31 @@ jobs:
   compose:
     name: Docker Compose smoke test
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v7
       - name: Start the stack and wait until it is healthy
         run: docker compose up --build --wait
-      - name: Check readiness from outside the container
+      - name: The API is ready
         run: curl --fail --silent --show-error http://localhost:3000/health/ready
+      - name: The edge serves the dashboard on the app host
+        run: curl --fail --silent --show-error http://localhost:8080/ | grep --quiet 'id="root"'
+      - name: The edge sends a short domain to the API
+        run: >-
+          curl --fail --silent --show-error --header 'Host: sho.localhost'
+          http://localhost:8080/health/ready
+      - name: The edge keeps operational endpoints private
+        run: |
+          for endpoint in /metrics /internal/tls/authorize; do
+            code=$(curl --silent --output /dev/null --write-out '%{http_code}' \
+              --dump-header headers.txt "http://localhost:8080$endpoint")
+            test "$code" = 404
+            # A request id would mean the request reached the API.
+            if grep --quiet --ignore-case '^x-request-id:' headers.txt; then
+              echo "$endpoint is reachable through the edge" >&2
+              exit 1
+            fi
+          done
       - name: Show logs
         if: failure()
         run: docker compose logs

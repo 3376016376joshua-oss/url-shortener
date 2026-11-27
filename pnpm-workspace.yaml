@@ -1,3 +1,11 @@
+packages:
+  - apps/*
+  - packages/*
+
 # Refuse versions published less than a day ago, so a compromised release
 # has time to be caught and pulled before it can reach this project.
 minimumReleaseAge: 1440
+
+# Lets `pnpm deploy` copy workspace packages into a self-contained bundle,
+# which is how the API image gets its production dependencies.
+injectWorkspacePackages: true
