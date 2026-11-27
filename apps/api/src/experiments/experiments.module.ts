@@ -1,11 +1,11 @@
 import { Module } from '@nestjs/common';
-import { ControlDestinationSelector } from './control-destination-selector.js';
 import { DestinationSelector } from './destination-selector.js';
+import { WeightedDestinationSelector } from './weighted-destination-selector.js';
 
-/** A/B destination assignment (PRD section 11). Built by the QR and experiments workstream. */
+/** A/B destination assignment (PRD section 11). */
 @Module({
   providers: [
-    { provide: DestinationSelector, useClass: ControlDestinationSelector },
+    { provide: DestinationSelector, useClass: WeightedDestinationSelector },
   ],
   exports: [DestinationSelector],
 })
