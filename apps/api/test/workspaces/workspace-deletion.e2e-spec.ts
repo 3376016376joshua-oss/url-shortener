@@ -25,6 +25,11 @@ import {
   type Account,
   type IdentityHarness,
 } from '../identity/identity-harness.js';
+import {
+  createDomain,
+  createLink,
+  follow,
+} from '../redirect/redirect-fixtures.js';
 import { testEnv } from '../support/test-env.js';
 
 /** More than two deletion batches, so batching is exercised. */
@@ -169,5 +174,47 @@ describe('workspace deletion (ID-5, AC-51)', () => {
         metadata: { name: `${owner.name}'s workspace` },
       });
     });
+  });
+});
+
+describe('workspace deletion, seen by a visitor (AC-51)', () => {
+  let harness: IdentityHarness;
+
+  beforeAll(async () => {
+    harness = await createIdentityHarness();
+  });
+
+  beforeEach(() => harness.reset());
+
+  afterAll(async () => {
+    await harness.app.close();
+  });
+
+  it('makes cached links answer 404 on the very next request', async () => {
+    const { app } = harness;
+    const owner = await createAccount(harness);
+    const platform = await app.get(DataSource).getRepository(Domain).save({
+      workspaceId: null,
+      hostname: testEnv.DEFAULT_SHORT_DOMAIN,
+      status: DomainStatus.Active,
+      verificationToken: 'platform-domain',
+    });
+    const custom = await createDomain(app, owner.workspaceId, 'go.brand.test');
+    const onPlatform = await createLink(app, platform, owner.workspaceId);
+    const onCustom = await createLink(app, custom, owner.workspaceId);
+    // Followed twice, so both the link and its domain are served from cache.
+    for (let visit = 0; visit < 2; visit += 1) {
+      await follow(app, onPlatform.code).expect(302);
+      await follow(app, onCustom.code, 'go.brand.test').expect(302);
+    }
+
+    await as(app, owner.cookie)
+      .delete(`/api/v1/workspaces/${owner.workspaceId}`)
+      .expect(204);
+
+    expect((await follow(app, onPlatform.code)).status).toBe(404);
+    expect((await follow(app, onCustom.code, 'go.brand.test')).status).toBe(
+      404,
+    );
   });
 });

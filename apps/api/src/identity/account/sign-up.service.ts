@@ -59,10 +59,8 @@ export class SignUpService {
     if (user === null || user.emailVerifiedAt !== null) {
       return;
     }
-    const token = await this.tokens.issue(
-      this.dataSource.manager,
-      user.id,
-      EmailTokenPurpose.VerifyEmail,
+    const token = await this.dataSource.transaction((manager) =>
+      this.tokens.issue(manager, user.id, EmailTokenPurpose.VerifyEmail),
     );
     this.mails.sendVerification(user, token);
   }

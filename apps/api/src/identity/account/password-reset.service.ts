@@ -42,10 +42,8 @@ export class PasswordResetService {
     ) {
       return;
     }
-    const token = await this.tokens.issue(
-      this.dataSource.manager,
-      user.id,
-      EmailTokenPurpose.ResetPassword,
+    const token = await this.dataSource.transaction((manager) =>
+      this.tokens.issue(manager, user.id, EmailTokenPurpose.ResetPassword),
     );
     this.mails.sendPasswordReset(user, token);
   }
