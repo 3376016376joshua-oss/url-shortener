@@ -5,7 +5,7 @@ import {
   Histogram,
   Registry,
   collectDefaultMetrics,
-} from 'prom-client';
+} from '@prometheus-io/client';
 import {
   COUNTER_DEFINITIONS,
   GAUGE_DEFINITIONS,
@@ -37,7 +37,7 @@ export class PrometheusMetrics extends Metrics {
   private readonly registry = new Registry();
   private readonly counters = new Map<CounterName, Counter>();
   private readonly gauges = new Map<GaugeName, Gauge>();
-  private readonly httpRequestDuration: Histogram;
+  private readonly httpRequestDuration: Histogram<string>;
 
   constructor() {
     super();
@@ -54,8 +54,9 @@ export class PrometheusMetrics extends Metrics {
         new Gauge({ name, ...definition, registers }),
       );
     }
-    this.httpRequestDuration = new Histogram({
+    this.httpRequestDuration = new Histogram<string>({
       ...HTTP_REQUEST_DURATION,
+      labelNames: [...HTTP_REQUEST_DURATION.labelNames],
       buckets: [...HTTP_REQUEST_DURATION.buckets],
       registers,
     });
