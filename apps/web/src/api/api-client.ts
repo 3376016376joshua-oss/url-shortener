@@ -4,7 +4,7 @@ import {
   ApiError,
   NetworkError,
   UnexpectedResponseError,
-  fallbackErrorCode,
+  undocumentedFailure,
 } from './api-error.js';
 
 /** Every management endpoint lives under this path, on the dashboard's origin. */
@@ -12,9 +12,6 @@ export const API_BASE_PATH = '/api/v1';
 
 const REQUEST_ID_HEADER = 'X-Request-Id';
 const RETRY_AFTER_HEADER = 'Retry-After';
-const HTTP_SERVER_ERROR_FLOOR = 500;
-const UNAVAILABLE_MESSAGE = 'The service is temporarily unavailable';
-const REJECTED_MESSAGE = 'The request could not be completed';
 
 export type HttpMethod = 'GET' | 'POST' | 'PATCH' | 'PUT' | 'DELETE';
 
@@ -113,14 +110,13 @@ function parseRetryAfter(response: Response): number | null {
 
 async function toApiError(response: Response): Promise<ApiError> {
   const body = apiErrorBodySchema.safeParse(await readJson(response));
-  const fallbackMessage =
-    response.status >= HTTP_SERVER_ERROR_FLOOR
-      ? UNAVAILABLE_MESSAGE
-      : REJECTED_MESSAGE;
+  const { code, message } = body.success
+    ? body.data
+    : undocumentedFailure(response.status);
   return new ApiError({
     status: response.status,
-    code: body.success ? body.data.code : fallbackErrorCode(response.status),
-    message: body.success ? body.data.message : fallbackMessage,
+    code,
+    message,
     requestId: response.headers.get(REQUEST_ID_HEADER),
     retryAfterSeconds: parseRetryAfter(response),
   });

@@ -19,6 +19,8 @@ export interface FakeFetch {
   fetch: typeof fetch;
   /** Every request made so far, in order. */
   requests: FakeRequest[];
+  /** The requests no handler answered, as `METHOD /path`. */
+  unhandled: string[];
 }
 
 export function jsonResponse(
@@ -66,10 +68,12 @@ function toFakeRequest(input: string, init: RequestInit): FakeRequest {
 
 /**
  * A `fetch` for tests that answers from a table of handlers. A request with
- * no handler rejects, so a test never passes against an endpoint it forgot.
+ * no handler is rejected, which the API client reports as a network
+ * failure, and is listed in `unhandled` for the test to assert on.
  */
 export function createFakeFetch(handlers: FakeHandlers): FakeFetch {
   const requests: FakeRequest[] = [];
+  const unhandled: string[] = [];
   const fakeFetch = (input: RequestInfo | URL, init: RequestInit = {}) => {
     if (typeof input !== 'string') {
       return Promise.reject(new Error('The fake fetch takes a string URL'));
@@ -79,9 +83,10 @@ export function createFakeFetch(handlers: FakeHandlers): FakeFetch {
     const key = `${request.method} ${request.path}`;
     const handler = handlers[key];
     if (handler === undefined) {
+      unhandled.push(key);
       return Promise.reject(new Error(`No fake handler for ${key}`));
     }
     return Promise.resolve(handler(request));
   };
-  return { fetch: fakeFetch, requests };
+  return { fetch: fakeFetch, requests, unhandled };
 }

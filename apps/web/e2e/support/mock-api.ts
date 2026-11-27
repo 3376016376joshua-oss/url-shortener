@@ -2,6 +2,10 @@ import type { Page, Route } from '@playwright/test';
 import type { ApiErrorBody, ErrorCode } from '@url-shortener/contracts';
 import type { Session } from '../../src/api/session.js';
 
+/**
+ * The same path as `API_BASE_PATH` in src/api/api-client.ts, written out
+ * because that module is browser code and this one runs in Node.
+ */
 const API_PREFIX = '/api/v1';
 
 /** The session the mock API starts with: an owner of Acme, a member of Globex. */

@@ -147,9 +147,13 @@ test.describe('session', () => {
 
     await page.getByRole('menuitem', { name: 'Sign out' }).click();
 
-    await expect(
-      page.getByRole('region', { name: 'Notifications' }),
-    ).toContainText('Could not sign out.');
+    // The message shows on the page itself, with the navigation panel of a
+    // narrow screen out of its way, where it can be read and dismissed.
+    const notifications = page.getByRole('region', { name: 'Notifications' });
+    await expect(notifications.getByText('Could not sign out.')).toBeVisible();
+    await expect(page.getByRole('dialog', { name: 'Navigation' })).toBeHidden();
     await expect(page).toHaveURL(`/w/${ACME}/links`);
+    await notifications.getByRole('button', { name: 'Dismiss' }).click();
+    await expect(notifications).not.toContainText('Could not sign out.');
   });
 });

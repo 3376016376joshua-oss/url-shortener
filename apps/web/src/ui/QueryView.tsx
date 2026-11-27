@@ -3,7 +3,10 @@ import type { ReactNode } from 'react';
 import { ErrorState, LoadingState } from './states.js';
 
 export interface QueryViewProps<Data> {
-  query: Pick<UseQueryResult<Data>, 'status' | 'data' | 'error' | 'refetch'>;
+  query: Pick<
+    UseQueryResult<Data>,
+    'data' | 'error' | 'isError' | 'isFetching' | 'refetch'
+  >;
   loadingLabel?: string;
   /** What failed, for the error state's heading. */
   errorTitle?: string;
@@ -24,7 +27,9 @@ export interface QueryViewProps<Data> {
 export function QueryView<Data>(props: QueryViewProps<Data>) {
   const { query } = props;
   if (query.data === undefined) {
-    return query.status === 'error' ? (
+    // While a retry is under way the failure gives way to the loading
+    // state, so pressing "Try again" visibly does something.
+    return query.isError && !query.isFetching ? (
       <ErrorState
         title={props.errorTitle}
         error={query.error}

@@ -5,13 +5,13 @@ A feature plugs in by adding files under `src/features/<feature>/`. It never edi
 
 ## What a feature may import
 
-| From               | What                                                                                                                       |
-| ------------------ | -------------------------------------------------------------------------------------------------------------------------- |
-| `src/app/shell.ts` | `paths`, `useSession()`, `useWorkspace()`, `useLinkParams()`, `roleAtLeast()`, `resolveNextPath()`, and the registry types |
-| `src/ui/index.ts`  | The component kit                                                                                                          |
-| `src/api`          | `useApiClient()`, `ApiError`, `describeError()`, `sessionQueryKey`                                                         |
-| `src/app/testing`  | `renderApp()`, for tests only                                                                                              |
-| `src/api/testing`  | `jsonResponse()`, `errorResponse()`, `emptyResponse()`, for tests only                                                     |
+| From                             | What                                                                                                                       |
+| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| `src/app/shell.ts`               | `paths`, `useSession()`, `useWorkspace()`, `useLinkParams()`, `roleAtLeast()`, `resolveNextPath()`, and the registry types |
+| `src/ui/index.ts`                | The component kit                                                                                                          |
+| `src/api/index.ts`               | `useApiClient()`, `ApiError`, `describeError()`, `sessionQueryKey`, `useSessionQuery()`                                    |
+| `src/app/testing/render-app.tsx` | `renderApp()`, for tests only                                                                                              |
+| `src/api/testing/fake-fetch.ts`  | `jsonResponse()`, `errorResponse()`, `emptyResponse()`, for tests only                                                     |
 
 Nothing else in `src/app` is for features.
 
@@ -49,7 +49,15 @@ The shell links to three addresses it does not serve itself, and expects a featu
 | `/workspaces/new`           | `account: 'workspaces/new'` | The workspace switcher, and a user with no workspace |
 | `/w/:workspaceId/links`     | `workspace: 'links'`        | The link detail frame's way back                     |
 
-The shell sends a signed-out visitor to `/sign-in?next=<where they were going>`. After a successful sign-in, invalidate `sessionQueryKey` and navigate to `resolveNextPath(location.search)`, which ignores anything that is not a path on this site.
+The shell sends a signed-out visitor to `/sign-in?next=<where they were going>`. After a successful sign-in, refresh the session and go where the visitor was heading; `resolveNextPath()` ignores anything that is not a path on this site.
+
+```tsx
+await queryClient.invalidateQueries({ queryKey: sessionQueryKey });
+await navigate(resolveNextPath(location.search));
+```
+
+The same refresh, awaited before navigating, follows anything else that changes what the session holds: the user's name, or the workspaces they belong to (creating, renaming, deleting, or leaving one, and accepting an invitation).
+A public page that needs to know whether someone is already signed in reads `useSessionQuery()`: its `data` is the session, `null` when signed out, and `undefined` while loading.
 
 ## Adding to the link page: `link-tabs.tsx`
 
@@ -77,6 +85,7 @@ These are requirement DB-6, and the kit is built so that following them is the e
 - **Render queries through `QueryView`,** which shows the loading, error, and empty states so a view cannot forget one. For anything else use `LoadingState`, `EmptyState`, and `ErrorState` directly.
 - **Pass errors, not messages.** `ErrorState` and `describeError()` turn whatever was thrown into words, with the request id.
 - **Ask before destroying.** Use `ConfirmDialog` for anything that cannot be undone.
+- **Report a failure where the person is looking.** A toast confirms something that worked on the page. Inside a `Dialog`, show the failure in the dialog with an `Alert`: while a dialog is open the browser makes everything outside it, toasts included, unreachable.
 - **Call the API through `useApiClient()` only.** It attaches the session, validates the response against the Zod schema you pass, raises typed errors, and ends the session on a `401`.
 - **Use the kit's controls** (`Button`, `TextField`, `SelectField`, `Menu`, `DataTable`, `TabNav`) rather than raw elements: they carry the labels, focus handling, and contrast.
 - **Lay out for 360 px first.** Wide content goes in a `DataTable` or its own `overflow-x-auto` box; the page itself must never scroll sideways.
@@ -86,16 +95,13 @@ These are requirement DB-6, and the kit is built so that following them is the e
 Unit tests render the whole dashboard in memory with the feature plugged in:
 
 ```tsx
-import { renderApp } from '../../app/testing/render-app.js';
 import { jsonResponse } from '../../api/testing/fake-fetch.js';
+import { renderApp } from '../../app/testing/render-app.js';
 import { routes } from './routes.js';
 
 renderApp({
   path: '/w/ws-1/domains',
-  registry: {
-    workspaceRoutes: routes.workspace,
-    workspaceNav: routes.workspaceNav,
-  },
+  features: [routes],
   handlers: {
     'GET /workspaces/ws-1/domains': () =>
       jsonResponse({ items: [], nextCursor: null }),
@@ -103,10 +109,11 @@ renderApp({
 });
 ```
 
-`renderApp` signs in as an owner of `ws-1` ("Acme") and a member of `ws-2` ("Globex") unless told otherwise, and a request to an endpoint without a handler fails the test.
+`renderApp` signs in as an owner of `ws-1` ("Acme") and a member of `ws-2` ("Globex") unless told otherwise. It takes `linkTabs: [module]` for the exports of a `link-tabs.tsx`. A request to an endpoint without a handler fails the test when it ends.
 
-Browser tests live in `apps/web/e2e` and run with `pnpm --filter @url-shortener/web test:e2e`. `e2e/support/test.ts` provides the `expectAccessible()` and `expectNoSidewaysScroll()` checks, and every spec runs on a desktop viewport and on a 360 px one.
-The specs in `e2e/shell` cover the shell alone: they build the dashboard in the `e2e` mode, where the fixture features of `e2e/fixtures/features` stand in for `src/features`, and each test answers the API itself.
+Browser tests live in `apps/web/e2e` and run with `pnpm test:web:e2e` from the repository root. `e2e/support/test.ts` provides the `expectAccessible()` and `expectNoSidewaysScroll()` checks.
+The specs in `e2e/shell` cover the shell alone, on a desktop viewport and on a 360 px one: they build the dashboard in the `e2e` mode, where the fixture features of `e2e/fixtures/features` stand in for `src/features`, and each test answers the API itself.
+Tests of the real features against a running stack are added as their own projects in `e2e/playwright.config.ts`, each with its own `testDir`, so they never run against the fixture build.
 
 ## The session
 

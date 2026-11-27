@@ -164,6 +164,28 @@ test.describe('navigation', () => {
     await expect(panel).toBeHidden();
   });
 
+  test('the navigation panel gets out of the way when the screen grows wide', async ({
+    page,
+    isNarrow,
+  }) => {
+    test.skip(!isNarrow, 'The panel exists only on a narrow screen');
+    await page.goto(`/w/${ACME}/links`);
+    await page.getByRole('button', { name: 'Open navigation' }).click();
+    await expect(
+      page.getByRole('dialog', { name: 'Navigation' }),
+    ).toBeVisible();
+
+    // As when a tablet is turned on its side.
+    await page.setViewportSize({ width: 1024, height: 768 });
+
+    // The sidebar takes over, and the page behind the panel is usable again.
+    await page
+      .getByRole('navigation', { name: 'Workspace' })
+      .getByRole('link', { name: 'Components' })
+      .click();
+    await expect(page).toHaveURL(`/w/${ACME}/kit`);
+  });
+
   test('an address that matches nothing in a workspace says so, inside the layout', async ({
     page,
     isNarrow,

@@ -6,9 +6,25 @@ import { sessionQueryKey } from '../api/session.js';
 import { ToastProvider } from '../ui/index.js';
 
 /**
+ * Ends the session in memory. The shell responds to the cleared session by
+ * sending the visitor to sign in. Everything else that was loaded is
+ * dropped too, so the next person to sign in on this page never sees it.
+ */
+function endSession(queryClient: QueryClient): void {
+  const hadSession = queryClient.getQueryData(sessionQueryKey) != null;
+  queryClient.setQueryData(sessionQueryKey, null);
+  // Only when a session really ended: a `401` to someone already signed
+  // out, such as a wrong password, has nothing to forget.
+  if (hadSession) {
+    queryClient.removeQueries({
+      predicate: (query) => query.queryKey[0] !== sessionQueryKey[0],
+    });
+  }
+}
+
+/**
  * The API client of a running dashboard. Any `401` means the session is
- * gone, so it clears the cached session, and the shell responds by sending
- * the visitor to sign in.
+ * gone, whatever the request was.
  */
 export function createSessionAwareApiClient(
   queryClient: QueryClient,
@@ -16,7 +32,7 @@ export function createSessionAwareApiClient(
 ): ApiClient {
   return createApiClient({
     fetch: fetchFn,
-    onUnauthenticated: () => queryClient.setQueryData(sessionQueryKey, null),
+    onUnauthenticated: () => endSession(queryClient),
   });
 }
 

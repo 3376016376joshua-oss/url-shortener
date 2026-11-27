@@ -37,14 +37,23 @@ function ToastItem(props: {
   onDismiss: (id: number) => void;
 }) {
   const { toast, onDismiss } = props;
+  // A toast someone is reading, or about to dismiss, does not vanish on them.
+  const [held, setHeld] = useState(false);
 
   useEffect(() => {
+    if (held) {
+      return;
+    }
     const timer = setTimeout(() => onDismiss(toast.id), TOAST_VISIBLE_MS);
     return () => clearTimeout(timer);
-  }, [toast.id, onDismiss]);
+  }, [toast.id, onDismiss, held]);
 
   return (
     <div
+      onPointerEnter={() => setHeld(true)}
+      onPointerLeave={() => setHeld(false)}
+      onFocus={() => setHeld(true)}
+      onBlur={() => setHeld(false)}
       className={cx(
         'pointer-events-auto flex w-full max-w-sm items-start gap-3 rounded-lg border px-4 py-3 text-sm shadow-lg',
         TONE_CLASSES[toast.tone],

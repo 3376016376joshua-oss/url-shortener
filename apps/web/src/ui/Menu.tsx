@@ -1,25 +1,39 @@
 import {
   createContext,
+  useCallback,
   useContext,
   useEffect,
   useId,
   useRef,
   useState,
+  type CSSProperties,
   type KeyboardEvent,
   type ReactNode,
   type RefObject,
 } from 'react';
 import { Link, type To } from 'react-router';
-import { cx } from './cx.js';
 import { CheckIcon } from './icons.js';
+import { placeMenu, type MenuSide } from './menu-placement.js';
 
 const ITEM_SELECTOR = '[role^="menuitem"]';
+
+const LIST_CLASSES =
+  'fixed z-20 flex w-max max-w-[min(20rem,calc(100vw-1rem))] flex-col gap-0.5 overflow-y-auto rounded-lg border border-slate-300 bg-white p-1 shadow-lg';
 
 const ITEM_CLASSES =
   'flex w-full items-center gap-2 rounded-md px-3 py-2 text-left text-sm text-slate-900 hover:bg-slate-100 focus-visible:bg-slate-100';
 
-/** Closes the menu the item sits in. */
-const MenuCloseContext = createContext<() => void>(() => undefined);
+interface MenuControls {
+  /** Closes the menu and leaves focus to whatever happens next. */
+  close: () => void;
+  /** Closes the menu and puts focus back on its button. */
+  dismiss: () => void;
+}
+
+const MenuContext = createContext<MenuControls>({
+  close: () => undefined,
+  dismiss: () => undefined,
+});
 
 function focusItem(
   list: HTMLElement,
@@ -30,40 +44,51 @@ function focusItem(
   items[pick(items.length, current)]?.focus();
 }
 
-function useCloseOnOutsidePress(
+/**
+ * While a menu is open: a press outside closes it, and the page scrolling
+ * or resizing under it moves it along with its button. Following the button
+ * rather than closing matters because scrolling is not always the person's
+ * doing: focusing a control can scroll the page, and a flick keeps going.
+ */
+function useFollowButton(
   rootRef: RefObject<HTMLElement | null>,
   open: boolean,
-  close: () => void,
+  controls: Pick<MenuControls, 'close'> & { place: () => void },
 ) {
+  const { close, place } = controls;
   useEffect(() => {
     if (!open) {
       return;
     }
-    const handlePress = (event: PointerEvent) => {
+    const closeIfOutside = (event: PointerEvent) => {
       const target = event.target;
-      if (
-        target instanceof Node &&
-        rootRef.current?.contains(target) !== true
-      ) {
+      const isInside =
+        target instanceof Node && rootRef.current?.contains(target) === true;
+      if (!isInside) {
         close();
       }
     };
-    document.addEventListener('pointerdown', handlePress);
-    return () => document.removeEventListener('pointerdown', handlePress);
-  }, [rootRef, open, close]);
+    document.addEventListener('pointerdown', closeIfOutside);
+    // Captured, because scroll events do not bubble out of a scrolling frame.
+    document.addEventListener('scroll', place, true);
+    window.addEventListener('resize', place);
+    return () => {
+      document.removeEventListener('pointerdown', closeIfOutside);
+      document.removeEventListener('scroll', place, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [rootRef, open, close, place]);
 }
 
 interface MenuListProps {
   id: string;
   label: string;
-  className: string;
-  /** Closes the menu and puts focus back on its button. */
-  dismiss: () => void;
-  close: () => void;
+  style: CSSProperties;
   children: ReactNode;
 }
 
 function MenuList(props: MenuListProps) {
+  const { close, dismiss } = useContext(MenuContext);
   const listRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -86,10 +111,10 @@ function MenuList(props: MenuListProps) {
       // Escape closes only the menu, not a dialog the menu may sit in.
       event.preventDefault();
       event.stopPropagation();
-      props.dismiss();
+      dismiss();
     } else if (event.key === 'Tab') {
       // Focus moves on by itself; the menu just gets out of the way.
-      props.close();
+      close();
     }
   };
 
@@ -100,11 +125,50 @@ function MenuList(props: MenuListProps) {
       role="menu"
       aria-label={props.label}
       onKeyDown={handleKeyDown}
-      className={props.className}
+      style={props.style}
+      className={LIST_CLASSES}
     >
       {props.children}
     </div>
   );
+}
+
+/** The open-or-closed state of one menu, and where it sits while open. */
+function useMenuState(side: MenuSide) {
+  // `null` while the menu is closed.
+  const [placement, setPlacement] = useState<CSSProperties | null>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
+  const buttonRef = useRef<HTMLButtonElement>(null);
+  const open = placement !== null;
+  const [controls] = useState<MenuControls>(() => ({
+    close: () => setPlacement(null),
+    dismiss: () => {
+      setPlacement(null);
+      buttonRef.current?.focus();
+    },
+  }));
+  const place = useCallback(() => {
+    const button = buttonRef.current;
+    if (button !== null) {
+      const viewport = document.documentElement;
+      setPlacement(
+        placeMenu(
+          button.getBoundingClientRect(),
+          { width: viewport.clientWidth, height: viewport.clientHeight },
+          side,
+        ),
+      );
+    }
+  }, [side]);
+  useFollowButton(rootRef, open, { close: controls.close, place });
+
+  return {
+    rootRef,
+    buttonRef,
+    placement,
+    controls,
+    toggle: open ? controls.close : place,
+  };
 }
 
 export interface MenuProps {
@@ -114,7 +178,7 @@ export interface MenuProps {
   button: ReactNode;
   buttonClassName?: string;
   /** Which side of the button the menu opens on. Defaults to `bottom`. */
-  side?: 'top' | 'bottom';
+  side?: MenuSide;
   /** Menu items: `MenuItem`, `MenuLink`, and `MenuSeparator`. */
   children: ReactNode;
 }
@@ -124,45 +188,31 @@ export interface MenuProps {
  * and End move between items; Escape closes and returns focus to the button.
  */
 export function Menu(props: MenuProps) {
-  const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
-  const buttonRef = useRef<HTMLButtonElement>(null);
   const menuId = useId();
-  const close = () => setOpen(false);
-  const dismiss = () => {
-    setOpen(false);
-    buttonRef.current?.focus();
-  };
-  useCloseOnOutsidePress(rootRef, open, close);
+  const { rootRef, buttonRef, placement, controls, toggle } = useMenuState(
+    props.side ?? 'bottom',
+  );
+  const open = placement !== null;
 
   return (
-    <div ref={rootRef} className="relative">
+    <div ref={rootRef}>
       <button
         ref={buttonRef}
         type="button"
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        onClick={() => setOpen((wasOpen) => !wasOpen)}
+        onClick={toggle}
         className={props.buttonClassName}
       >
         {props.button}
       </button>
       {open ? (
-        <MenuCloseContext value={close}>
-          <MenuList
-            id={menuId}
-            label={props.label}
-            dismiss={dismiss}
-            close={close}
-            className={cx(
-              'absolute inset-x-0 z-20 flex max-h-80 min-w-48 flex-col gap-0.5 overflow-y-auto rounded-lg border border-slate-300 bg-white p-1 shadow-lg',
-              props.side === 'top' ? 'bottom-full mb-1' : 'top-full mt-1',
-            )}
-          >
+        <MenuContext value={controls}>
+          <MenuList id={menuId} label={props.label} style={placement}>
             {props.children}
           </MenuList>
-        </MenuCloseContext>
+        </MenuContext>
       ) : null}
     </div>
   );
@@ -175,7 +225,7 @@ export interface MenuItemProps {
 
 /** A menu entry that does something. */
 export function MenuItem(props: MenuItemProps) {
-  const close = useContext(MenuCloseContext);
+  const { dismiss } = useContext(MenuContext);
   return (
     <button
       type="button"
@@ -183,7 +233,9 @@ export function MenuItem(props: MenuItemProps) {
       tabIndex={-1}
       className={ITEM_CLASSES}
       onClick={() => {
-        close();
+        // Focus returns to the button first, so a dialog the action opens
+        // has somewhere to give focus back to when it closes.
+        dismiss();
         props.onSelect();
       }}
     >
@@ -201,7 +253,7 @@ export interface MenuLinkProps {
 
 /** A menu entry that goes somewhere. */
 export function MenuLink(props: MenuLinkProps) {
-  const close = useContext(MenuCloseContext);
+  const { close } = useContext(MenuContext);
   const isChoice = props.selected !== undefined;
   return (
     <Link

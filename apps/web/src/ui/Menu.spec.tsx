@@ -106,7 +106,7 @@ describe('Menu', () => {
     expect(screen.queryByRole('menu')).toBeNull();
   });
 
-  it('runs an action item and closes', async () => {
+  it('runs an action item, closes, and returns focus to the button', async () => {
     const { user } = renderMenu();
     await user.click(screen.getByRole('button', { name: 'Acme' }));
 
@@ -114,6 +114,10 @@ describe('Menu', () => {
 
     expect(onRename).toHaveBeenCalledOnce();
     expect(screen.queryByRole('menu')).toBeNull();
+    // So a dialog the action opens can hand focus back when it closes.
+    expect(document.activeElement).toBe(
+      screen.getByRole('button', { name: 'Acme' }),
+    );
   });
 
   it('follows a link item and closes', async () => {

@@ -16,6 +16,7 @@ export {
 export { describeError, type ErrorDescription } from './describe-error.js';
 export {
   sessionQueryKey,
+  useSessionQuery,
   WORKSPACE_ROLES,
   type Session,
   type SessionWorkspace,

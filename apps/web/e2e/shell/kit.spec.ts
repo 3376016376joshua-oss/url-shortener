@@ -1,5 +1,18 @@
-import { expect, test } from '../support/test.js';
+import type { Locator } from '@playwright/test';
+import { expect, expectNoSidewaysScroll, test } from '../support/test.js';
 import { ACME } from './data.js';
+
+/** How far the top of `menu` sits from the top of `button`, in pixels. */
+async function gapBetween(button: Locator, menu: Locator): Promise<number> {
+  const [buttonBox, menuBox] = await Promise.all([
+    button.boundingBox(),
+    menu.boundingBox(),
+  ]);
+  if (buttonBox === null || menuBox === null) {
+    throw new Error('The button and its menu must both be on screen');
+  }
+  return Math.round(menuBox.y - buttonBox.y);
+}
 
 test.describe('component kit', () => {
   test.beforeEach(async ({ page }) => {
@@ -65,6 +78,56 @@ test.describe('component kit', () => {
 
     await expect(menu).toBeHidden();
     await expect(button).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  test('a menu in a table row opens whole, on screen, outside the table frame', async ({
+    page,
+  }) => {
+    const button = page.getByRole('button', { name: 'TXT actions' });
+    await button.click();
+    const menu = page.getByRole('menu', {
+      name: 'Actions for the TXT record',
+    });
+
+    await expect(menu).toBeInViewport({ ratio: 1 });
+    await expectNoSidewaysScroll(page);
+    // A real press lands on the item, so nothing clips or covers it.
+    await menu.getByRole('menuitem', { name: 'Check again' }).click();
+    await expect(menu).toBeHidden();
+    await expect(button).toBeFocused();
+  });
+
+  test('a dialog opened from a menu gives focus back to the menu button', async ({
+    page,
+  }) => {
+    const button = page.getByRole('button', { name: 'CNAME actions' });
+    await button.click();
+    await page.getByRole('menuitem', { name: 'Remove record' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Delete this link?' });
+    await expect(dialog).toBeVisible();
+
+    await dialog.getByRole('button', { name: 'Cancel' }).click();
+
+    await expect(dialog).toBeHidden();
+    await expect(button).toBeFocused();
+  });
+
+  test('a menu stays with its button when the page scrolls under it', async ({
+    page,
+  }) => {
+    const button = page.getByRole('button', { name: 'More actions' });
+    await button.click();
+    const menu = page.getByRole('menu', { name: 'Link actions' });
+    await expect(menu).toBeVisible();
+    const gapBefore = await gapBetween(button, menu);
+
+    await page.mouse.wheel(0, 120);
+    await expect
+      .poll(() => page.evaluate(() => window.scrollY))
+      .toBeGreaterThan(0);
+
+    await expect(menu).toBeVisible();
+    await expect.poll(() => gapBetween(button, menu)).toBe(gapBefore);
   });
 
   test('a copy button puts the value on the clipboard and says so', async ({

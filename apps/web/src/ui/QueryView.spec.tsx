@@ -11,7 +11,14 @@ const refetch = vi.fn<Query['refetch']>();
 function renderView(query: Partial<Query>) {
   return render(
     <QueryView
-      query={{ data: undefined, error: null, refetch, ...query } as Query}
+      query={{
+        data: undefined,
+        error: null,
+        isError: false,
+        isFetching: false,
+        refetch,
+        ...query,
+      }}
       loadingLabel="Loading links"
       errorTitle="The links could not be loaded"
       isEmpty={(links) => links.length === 0}
@@ -37,13 +44,13 @@ describe('QueryView', () => {
   });
 
   it('says what is loading', () => {
-    renderView({ status: 'pending' });
+    renderView({ isFetching: true });
 
     expect(screen.getByRole('status').textContent).toBe('Loading links');
   });
 
   it('shows a failure with its request id and retries on request', async () => {
-    renderView({ status: 'error', error: failure });
+    renderView({ isError: true, error: failure });
 
     const alert = screen.getByRole('alert');
     expect(alert.textContent).toContain('The links could not be loaded');
@@ -52,20 +59,27 @@ describe('QueryView', () => {
     expect(refetch).toHaveBeenCalledOnce();
   });
 
+  it('goes back to loading while a failed query is tried again', () => {
+    renderView({ isError: true, error: failure, isFetching: true });
+
+    expect(screen.getByRole('status').textContent).toBe('Loading links');
+    expect(screen.queryByRole('alert')).toBeNull();
+  });
+
   it('shows the empty state for data that counts as nothing', () => {
-    renderView({ status: 'success', data: [] });
+    renderView({ data: [] });
 
     expect(screen.getByText('No links yet')).toBeDefined();
   });
 
   it('renders loaded data', () => {
-    renderView({ status: 'success', data: ['launch', 'jobs'] });
+    renderView({ data: ['launch', 'jobs'] });
 
     expect(screen.getByText('launch, jobs')).toBeDefined();
   });
 
   it('keeps loaded data on screen when a later refresh fails', () => {
-    renderView({ status: 'error', error: failure, data: ['launch'] });
+    renderView({ isError: true, error: failure, data: ['launch'] });
 
     expect(screen.getByText('launch')).toBeDefined();
     expect(screen.queryByRole('alert')).toBeNull();

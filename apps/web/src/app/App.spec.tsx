@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { errorResponse } from '../api/testing/fake-fetch.js';
 import { App } from './App.js';
@@ -17,10 +17,9 @@ describe('App', () => {
 
     render(<App />);
 
-    // No feature serves the sign-in page in this build, so the address
-    // itself is the proof of where the shell sent the visitor.
-    await screen.findByRole('heading', { level: 1, name: 'Page not found' });
-    expect(window.location.pathname).toBe('/sign-in');
+    // Asserted by address, not by page: which page a feature serves at the
+    // sign-in address is not the shell's business.
+    await waitFor(() => expect(window.location.pathname).toBe('/sign-in'));
     expect(fetchFn).toHaveBeenCalledWith('/api/v1/me', expect.anything());
   });
 });

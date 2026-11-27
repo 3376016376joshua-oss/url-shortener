@@ -135,6 +135,18 @@ test.describe('accessibility and layout (DB-6)', () => {
     await expectUsable(page, testInfo);
   });
 
+  test('an open menu in a table row is accessible and fits the screen', async ({
+    page,
+  }, testInfo) => {
+    await page.goto(`/w/${ACME}/kit`);
+    await page.getByRole('button', { name: 'CNAME actions' }).click();
+    await expect(
+      page.getByRole('menu', { name: 'Actions for the CNAME record' }),
+    ).toBeVisible();
+
+    await expectUsable(page, testInfo);
+  });
+
   test('an open dialog and a toast are accessible and fit the screen', async ({
     page,
   }, testInfo) => {

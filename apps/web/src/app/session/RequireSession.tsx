@@ -1,11 +1,9 @@
 import { Navigate, Outlet, useLocation } from 'react-router';
 import { useSessionQuery } from '../../api/session.js';
 import { ErrorState, LoadingState } from '../../ui/index.js';
+import { FullPage } from '../layout/FullPage.js';
 import { signInPath } from '../paths.js';
 import { SessionContext } from './session-context.js';
-
-const FULL_PAGE_CLASSES =
-  'mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-4';
 
 /**
  * The gate in front of every signed-in page. It loads the session once and
@@ -24,7 +22,7 @@ export function RequireSession() {
   const isSettled = !query.isFetching && !query.isError;
   if (query.data === undefined || (query.data === null && !isSettled)) {
     return (
-      <main className={FULL_PAGE_CLASSES}>
+      <FullPage>
         {query.isError && !query.isFetching ? (
           <ErrorState
             title="Your account could not be loaded"
@@ -34,7 +32,7 @@ export function RequireSession() {
         ) : (
           <LoadingState label="Loading your account" />
         )}
-      </main>
+      </FullPage>
     );
   }
   if (query.data === null) {

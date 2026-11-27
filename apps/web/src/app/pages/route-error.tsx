@@ -1,5 +1,6 @@
 import { useRouteError } from 'react-router';
 import { Button, ErrorState } from '../../ui/index.js';
+import { FullPage } from '../layout/FullPage.js';
 
 /**
  * What a page shows when rendering it threw. The layout around it stays up,
@@ -23,8 +24,8 @@ export function RouteErrorState() {
 /** The same, for a failure outside any layout. */
 export function RouteErrorPage() {
   return (
-    <main className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-4 py-10">
+    <FullPage>
       <RouteErrorState />
-    </main>
+    </FullPage>
   );
 }

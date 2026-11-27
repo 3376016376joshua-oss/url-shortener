@@ -62,6 +62,24 @@ describe('ToastProvider', () => {
     expect(region.textContent).not.toContain('Link saved');
   });
 
+  it('keeps a toast for as long as it is pointed at or focused', () => {
+    const region = renderToasts();
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }));
+    const dismiss = screen.getByRole('button', { name: 'Dismiss' });
+
+    fireEvent.focus(dismiss);
+    act(() => {
+      vi.advanceTimersByTime(60_000);
+    });
+    expect(region.textContent).toContain('Link saved');
+
+    fireEvent.blur(dismiss);
+    act(() => {
+      vi.advanceTimersByTime(6_000);
+    });
+    expect(region.textContent).not.toContain('Link saved');
+  });
+
   it('removes only the toast that was dismissed', () => {
     const region = renderToasts();
     fireEvent.click(screen.getByRole('button', { name: 'Save' }));

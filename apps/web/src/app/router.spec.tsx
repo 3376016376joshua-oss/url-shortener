@@ -1,47 +1,14 @@
-import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
-import { useLocation, useNavigate } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { z } from 'zod';
-import { useApiClient } from '../api/api-context.js';
-import { sessionQueryKey } from '../api/session.js';
+import { PageHeader } from '../ui/index.js';
 import {
-  emptyResponse,
-  errorResponse,
-  jsonResponse,
-} from '../api/testing/fake-fetch.js';
-import { PageHeader, QueryView } from '../ui/index.js';
-import type { Registry } from './registry/collect.js';
-import { leaveTo } from './session/leave-to.js';
-import {
-  resolveNextPath,
   useLinkParams,
   useSession,
   useWorkspace,
+  type FeatureRoutes,
+  type LinkTabsModule,
 } from './shell.js';
 import { renderApp, TEST_SESSION } from './testing/render-app.js';
-
-vi.mock('./session/leave-to.js', () => ({ leaveTo: vi.fn() }));
-
-/** Signs in the way the README tells the auth feature to. */
-function SignInPage() {
-  const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const location = useLocation();
-  const finishSignIn = async () => {
-    await queryClient.invalidateQueries({ queryKey: sessionQueryKey });
-    await navigate(resolveNextPath(location.search));
-  };
-  return (
-    <>
-      <PageHeader title="Sign in" />
-      <button type="button" onClick={() => void finishSignIn()}>
-        Sign in
-      </button>
-    </>
-  );
-}
 
 function LinksPage() {
   const workspace = useWorkspace();
@@ -56,18 +23,6 @@ function BrokenPage(): never {
   throw new Error('This page always fails to render');
 }
 
-function ProtectedPage() {
-  const api = useApiClient();
-  const query = useQuery({
-    queryKey: ['protected'],
-    queryFn: () =>
-      api.request('GET', '/protected', {
-        schema: z.object({ ok: z.boolean() }),
-      }),
-  });
-  return <QueryView query={query}>{() => <p>Loaded</p>}</QueryView>;
-}
-
 function AnalyticsTab() {
   const { workspaceId, linkId } = useLinkParams();
   return <p>{`Analytics of ${linkId} in ${workspaceId}`}</p>;
@@ -77,12 +32,10 @@ function LinkHeader() {
   return <PageHeader title={`Link ${useLinkParams().linkId}`} />;
 }
 
-const REGISTRY: Partial<Registry> = {
-  publicRoutes: [{ path: 'sign-in', Component: SignInPage }],
-  accountRoutes: [{ path: 'account/profile', Component: ProfilePage }],
-  workspaceRoutes: [
+const FEATURE: FeatureRoutes = {
+  account: [{ path: 'account/profile', Component: ProfilePage }],
+  workspace: [
     { path: 'links', Component: LinksPage },
-    { path: 'protected', Component: ProtectedPage },
     { path: 'broken', Component: BrokenPage },
   ],
   accountNav: [{ label: 'Profile', to: '/account/profile', order: 10 }],
@@ -90,6 +43,9 @@ const REGISTRY: Partial<Registry> = {
     { label: 'Links', to: 'links', order: 10 },
     { label: 'Members', to: 'members', order: 20, minRole: 'admin' },
   ],
+};
+
+const LINK_TABS: LinkTabsModule = {
   linkTabs: [
     { id: 'analytics', label: 'Analytics', order: 10, Component: AnalyticsTab },
     { id: 'qr-code', label: 'QR code', order: 20, Component: () => <p>QR</p> },
@@ -101,40 +57,30 @@ function heading(name: string) {
   return screen.findByRole('heading', { level: 1, name });
 }
 
+async function workspaceNavLabels() {
+  const nav = await screen.findByRole('navigation', { name: 'Workspace' });
+  return within(nav)
+    .getAllByRole('link')
+    .map((link) => link.textContent);
+}
+
 describe('the dashboard routes', () => {
-  beforeEach(() => {
-    window.localStorage.clear();
-    vi.mocked(leaveTo).mockClear();
-  });
+  beforeEach(() => window.localStorage.clear());
   afterEach(cleanup);
 
-  it('sends a signed-out visitor to sign in, remembering the address', async () => {
-    const { router } = renderApp({
-      path: '/w/ws-1/links?status=ACTIVE',
-      registry: REGISTRY,
-      session: null,
-    });
-
-    await heading('Sign in');
-    expect(router.state.location.pathname).toBe('/sign-in');
-    expect(router.state.location.search).toBe(
-      '?next=%2Fw%2Fws-1%2Flinks%3Fstatus%3DACTIVE',
-    );
-  });
-
   it('opens the first section of the first workspace', async () => {
-    const { router } = renderApp({ path: '/', registry: REGISTRY });
+    const { router } = renderApp({ path: '/', features: [FEATURE] });
 
     await heading('Links of Acme');
     expect(router.state.location.pathname).toBe('/w/ws-1/links');
   });
 
   it('reopens the workspace that was open last', async () => {
-    const first = renderApp({ path: '/w/ws-2/links', registry: REGISTRY });
+    const first = renderApp({ path: '/w/ws-2/links', features: [FEATURE] });
     await heading('Links of Globex');
     first.unmount();
 
-    const { router } = renderApp({ path: '/', registry: REGISTRY });
+    const { router } = renderApp({ path: '/', features: [FEATURE] });
 
     await heading('Links of Globex');
     expect(router.state.location.pathname).toBe('/w/ws-2/links');
@@ -143,7 +89,7 @@ describe('the dashboard routes', () => {
   it('sends a user with no workspace to create one', async () => {
     const { router } = renderApp({
       path: '/',
-      registry: REGISTRY,
+      features: [FEATURE],
       session: { ...TEST_SESSION, workspaces: [] },
     });
 
@@ -153,36 +99,22 @@ describe('the dashboard routes', () => {
   });
 
   it('hides a workspace the user is not in behind "not found"', async () => {
-    renderApp({ path: '/w/ws-other/links', registry: REGISTRY });
+    renderApp({ path: '/w/ws-other/links', features: [FEATURE] });
 
     await heading('Workspace not found');
   });
 
   it('shows a section only to the roles allowed to use it', async () => {
-    const owner = renderApp({ path: '/w/ws-1/links', registry: REGISTRY });
-    const ownerNav = await screen.findByRole('navigation', {
-      name: 'Workspace',
-    });
-    expect(
-      within(ownerNav)
-        .getAllByRole('link')
-        .map((link) => link.textContent),
-    ).toEqual(['Links', 'Members']);
+    const owner = renderApp({ path: '/w/ws-1/links', features: [FEATURE] });
+    expect(await workspaceNavLabels()).toEqual(['Links', 'Members']);
     owner.unmount();
 
-    renderApp({ path: '/w/ws-2/links', registry: REGISTRY });
-    const memberNav = await screen.findByRole('navigation', {
-      name: 'Workspace',
-    });
-    expect(
-      within(memberNav)
-        .getAllByRole('link')
-        .map((link) => link.textContent),
-    ).toEqual(['Links']);
+    renderApp({ path: '/w/ws-2/links', features: [FEATURE] });
+    expect(await workspaceNavLabels()).toEqual(['Links']);
   });
 
   it('lists the account pages outside a workspace', async () => {
-    renderApp({ path: '/account/profile', registry: REGISTRY });
+    renderApp({ path: '/account/profile', features: [FEATURE] });
 
     await heading('Profile of Ada Lovelace');
     const nav = screen.getByRole('navigation', { name: 'Account' });
@@ -190,10 +122,18 @@ describe('the dashboard routes', () => {
     expect(screen.queryByRole('navigation', { name: 'Workspace' })).toBeNull();
   });
 
+  it('shows a workspace without sections as empty, not as an error', async () => {
+    renderApp({ path: '/w/ws-1' });
+
+    await heading('Acme');
+    expect(screen.getByText('Nothing here yet')).toBeDefined();
+  });
+
   it('opens a link on its first tab, under the feature-provided heading', async () => {
     const { router } = renderApp({
       path: '/w/ws-1/links/link-9',
-      registry: REGISTRY,
+      features: [FEATURE],
+      linkTabs: [LINK_TABS],
     });
 
     await heading('Link link-9');
@@ -212,10 +152,7 @@ describe('the dashboard routes', () => {
   });
 
   it('shows a plain link frame while no feature contributes to it', async () => {
-    renderApp({
-      path: '/w/ws-1/links/link-9',
-      registry: { ...REGISTRY, linkTabs: [], LinkHeader: null },
-    });
+    renderApp({ path: '/w/ws-1/links/link-9', features: [FEATURE] });
 
     await heading('Link');
     expect(screen.getByText('Nothing to show yet')).toBeDefined();
@@ -224,92 +161,17 @@ describe('the dashboard routes', () => {
     ).toBeNull();
   });
 
-  it('opens the page the visitor was going to once they have signed in', async () => {
-    let signedIn = false;
-    const { router } = renderApp({
-      path: '/w/ws-1/links',
-      registry: REGISTRY,
-      handlers: {
-        'GET /me': () =>
-          signedIn
-            ? jsonResponse(TEST_SESSION)
-            : errorResponse(401, 'UNAUTHENTICATED', 'Sign in to continue'),
-      },
-    });
-    await heading('Sign in');
-
-    signedIn = true;
-    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
-
-    await heading('Links of Acme');
-    expect(router.state.location.pathname).toBe('/w/ws-1/links');
-  });
-
-  it('ends the session when any request answers 401', async () => {
-    const { router } = renderApp({
-      path: '/w/ws-1/protected',
-      registry: REGISTRY,
-      handlers: {
-        'GET /protected': () =>
-          errorResponse(401, 'UNAUTHENTICATED', 'Sign in to continue'),
-      },
-    });
-
-    await heading('Sign in');
-    expect(router.state.location.search).toBe('?next=%2Fw%2Fws-1%2Fprotected');
-  });
-
   it('keeps the navigation up when a page fails to render', async () => {
     const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {
       // React reports the render error it caught; the test expects it.
     });
 
-    renderApp({ path: '/w/ws-1/broken', registry: REGISTRY });
+    renderApp({ path: '/w/ws-1/broken', features: [FEATURE] });
 
     expect((await screen.findByRole('alert')).textContent).toContain(
       'This page ran into a problem',
     );
     expect(screen.getByRole('navigation', { name: 'Workspace' })).toBeDefined();
     consoleError.mockRestore();
-  });
-
-  it('signs out through the API, then leaves for the sign-in page', async () => {
-    const user = userEvent.setup();
-    const { requests } = renderApp({
-      path: '/w/ws-1/links',
-      registry: REGISTRY,
-      handlers: { 'POST /auth/sign-out': () => emptyResponse() },
-    });
-    await heading('Links of Acme');
-
-    await user.click(screen.getByRole('button', { name: /^Account:\s*Ada/ }));
-    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
-
-    await waitFor(() => expect(leaveTo).toHaveBeenCalledWith('/sign-in'));
-    expect(
-      requests.map((request) => `${request.method} ${request.path}`),
-    ).toContain('POST /auth/sign-out');
-  });
-
-  it('stays signed in, and says why, when signing out fails', async () => {
-    const user = userEvent.setup();
-    renderApp({
-      path: '/w/ws-1/links',
-      registry: REGISTRY,
-      handlers: {
-        'POST /auth/sign-out': () =>
-          errorResponse(503, 'SERVICE_UNAVAILABLE', 'Down'),
-      },
-    });
-    await heading('Links of Acme');
-
-    await user.click(screen.getByRole('button', { name: /^Account:\s*Ada/ }));
-    await user.click(screen.getByRole('menuitem', { name: 'Sign out' }));
-
-    const notifications = screen.getByRole('region', { name: 'Notifications' });
-    await waitFor(() =>
-      expect(notifications.textContent).toContain('Could not sign out.'),
-    );
-    expect(leaveTo).not.toHaveBeenCalled();
   });
 });

@@ -61,11 +61,19 @@ export class UnexpectedResponseError extends Error {
 }
 
 /**
- * The code for a failure that did not arrive in the documented error body,
- * for example a gateway error page from the edge.
+ * The code and message for a failure that did not arrive in the documented
+ * error body, for example a gateway error page from the edge.
  */
-export function fallbackErrorCode(status: number): ErrorCode {
+export function undocumentedFailure(
+  status: number,
+): Pick<ApiErrorDetails, 'code' | 'message'> {
   return status >= HTTP_SERVER_ERROR_FLOOR
-    ? ErrorCode.ServiceUnavailable
-    : ErrorCode.RequestRejected;
+    ? {
+        code: ErrorCode.ServiceUnavailable,
+        message: 'The service is temporarily unavailable',
+      }
+    : {
+        code: ErrorCode.RequestRejected,
+        message: 'The request could not be completed',
+      };
 }

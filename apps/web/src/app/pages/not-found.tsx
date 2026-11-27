@@ -1,5 +1,5 @@
-import { Link } from 'react-router';
-import { Brand, ButtonLink, PageHeader } from '../../ui/index.js';
+import { ButtonLink, PageHeader } from '../../ui/index.js';
+import { FullPage } from '../layout/FullPage.js';
 import { paths } from '../paths.js';
 
 export interface NotFoundStateProps {
@@ -28,13 +28,8 @@ export function NotFoundState(props: NotFoundStateProps) {
 /** "Not found" for an address that belongs to no layout at all. */
 export function NotFoundPage() {
   return (
-    <div className="mx-auto flex min-h-dvh max-w-lg flex-col justify-center px-4 py-10">
-      <Link to={paths.home} className="mb-8 self-start rounded-md">
-        <Brand />
-      </Link>
-      <main>
-        <NotFoundState />
-      </main>
-    </div>
+    <FullPage>
+      <NotFoundState />
+    </FullPage>
   );
 }
