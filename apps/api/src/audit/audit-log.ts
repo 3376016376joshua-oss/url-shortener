@@ -1,3 +1,4 @@
+import type { EntityManager } from 'typeorm';
 import type { AuditActorType } from '../database/entities/audit-log-entry.entity.js';
 
 export interface AuditEntry {
@@ -13,6 +14,10 @@ export interface AuditEntry {
 
 /** How feature modules record who changed what. */
 export abstract class AuditLog {
-  /** Await it: an action that is not recorded should not report success. */
-  abstract record(entry: AuditEntry): Promise<void>;
+  /**
+   * Await it: an action that is not recorded should not report success.
+   * Pass the transaction's `manager` to commit the entry together with the
+   * change it describes; without one the entry is written on its own.
+   */
+  abstract record(entry: AuditEntry, manager?: EntityManager): Promise<void>;
 }

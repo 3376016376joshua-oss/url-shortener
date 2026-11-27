@@ -22,6 +22,7 @@
     "@nestjs/platform-express": "^12.6.2",
     "@nestjs/typeorm": "^12.0.3",
     "@url-shortener/contracts": "workspace:*",
+    "nodemailer": "^10.6.1",
     "pg": "^8.23.1",
     "qrcode": "^1.5.4",
     "redis": "^6.4.0",
