@@ -1,6 +1,6 @@
 import { HttpStatus, Inject, Injectable } from '@nestjs/common';
 import { ErrorCode } from '@url-shortener/contracts';
-import { DataSource } from 'typeorm';
+import { DataSource, type EntityManager } from 'typeorm';
 import { ApiException } from '../common/errors/api-exception.js';
 import { Domain, DomainStatus } from '../database/entities/domain.entity.js';
 import {
@@ -27,11 +27,18 @@ export class DestinationRiskCheck {
     private readonly dataSource: DataSource,
   ) {}
 
-  /** Fails the request with 422 unless the destination may be linked to. */
-  async assertAllowed(destinationUrl: string): Promise<void> {
+  /**
+   * Fails the request with 422 unless the destination may be linked to. A
+   * caller inside a transaction passes its manager, so the check does not
+   * wait for a second connection while the first holds a row lock.
+   */
+  async assertAllowed(
+    destinationUrl: string,
+    manager: EntityManager = this.dataSource.manager,
+  ): Promise<void> {
     const risk =
       assessDestination(destinationUrl, this.policy) ??
-      (await this.shortDomainRisk(destinationUrl));
+      (await this.shortDomainRisk(destinationUrl, manager));
     if (risk !== null) {
       throw new ApiException(
         HttpStatus.UNPROCESSABLE_ENTITY,
@@ -47,8 +54,9 @@ export class DestinationRiskCheck {
    */
   private async shortDomainRisk(
     destinationUrl: string,
+    manager: EntityManager,
   ): Promise<DestinationRisk | null> {
-    const isShortDomain = await this.dataSource.getRepository(Domain).existsBy({
+    const isShortDomain = await manager.existsBy(Domain, {
       hostname: destinationHost(destinationUrl),
       status: DomainStatus.Active,
     });

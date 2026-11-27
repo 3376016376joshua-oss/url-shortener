@@ -27,6 +27,8 @@ describe('destinationUrlSchema', () => {
     'mailto:someone@example.com',
     '/relative/path',
     'example.com',
+    'http:example.com',
+    'https:/example.com',
     'https://',
     '',
   ])('rejects %s', (input) => {
@@ -139,6 +141,11 @@ describe('listLinksQuerySchema', () => {
   it('defaults the limit and coerces it from the query string', () => {
     expect(listLinksQuerySchema.parse({}).limit).toBe(25);
     expect(listLinksQuerySchema.parse({ limit: '60' }).limit).toBe(60);
+  });
+
+  it('treats an empty search as no search', () => {
+    expect(listLinksQuerySchema.parse({ search: '  ' }).search).toBeUndefined();
+    expect(listLinksQuerySchema.parse({ search: ' go ' }).search).toBe('go');
   });
 
   it.each(['0', '101', '2.5', 'many'])('rejects the limit %s', (limit) => {

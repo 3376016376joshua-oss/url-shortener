@@ -28,9 +28,14 @@ const LOCAL_SUBNETS: ReadonlyArray<[string, number, 'ipv4' | 'ipv6']> = [
   ['169.254.0.0', 16, 'ipv4'],
   ['172.16.0.0', 12, 'ipv4'],
   ['192.168.0.0', 16, 'ipv4'],
-  ['::', 127, 'ipv6'],
+  // Unspecified, loopback, and the IPv4-compatible form of every IPv4 address.
+  ['::', 96, 'ipv6'],
+  // NAT64 and 6to4 embed an IPv4 address, which may be a local one.
+  ['64:ff9b::', 96, 'ipv6'],
+  ['2002::', 16, 'ipv6'],
   ['fc00::', 7, 'ipv6'],
   ['fe80::', 10, 'ipv6'],
+  ['fec0::', 10, 'ipv6'],
 ];
 
 const localAddresses = new BlockList();
@@ -40,12 +45,12 @@ for (const [network, prefix, family] of LOCAL_SUBNETS) {
 
 /**
  * The host of a stored destination, comparable with configured host names:
- * without the brackets of an IPv6 literal and without a trailing dot.
+ * without the brackets of an IPv6 literal and without trailing dots.
  */
 export function destinationHost(destinationUrl: string): string {
   return new URL(destinationUrl).hostname
     .replace(/^\[|\]$/g, '')
-    .replace(/\.$/, '');
+    .replace(/\.+$/, '');
 }
 
 /** True when the host is one of `hosts` or a subdomain of one. */

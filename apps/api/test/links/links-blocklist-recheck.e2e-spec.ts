@@ -1,4 +1,13 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
+import { Logger } from '@nestjs/common';
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  vi,
+} from 'vitest';
 import { StoredLinkStatus } from '../../src/common/link/link-state.js';
 import { LinkVariant } from '../../src/database/entities/link-variant.entity.js';
 import { Link } from '../../src/database/entities/link.entity.js';
@@ -113,6 +122,37 @@ describe('daily blocklist re-check', () => {
         metadata: { reason: 'blocklist' },
       },
     ]);
+  });
+
+  it('leaves `updated_at` alone: a takedown is not an edit', async () => {
+    const bad = await insertLink('bad', { destinationUrl: BAD });
+
+    await run();
+
+    const row = await harness.dataSource
+      .getRepository(Link)
+      .findOneByOrFail({ id: bad.id });
+    expect(row.status).toBe('BLOCKED');
+    expect(row.updatedAt).toEqual(bad.updatedAt);
+  });
+
+  it('does not block a link whose audit entry cannot be written, and carries on', async () => {
+    vi.spyOn(Logger.prototype, 'error').mockImplementation(() => undefined);
+    const first = await insertLink('first', { destinationUrl: BAD });
+    await insertLink('second', { destinationUrl: BAD });
+    harness.failAuditFor(first.id);
+
+    const blocked = await run();
+
+    expect(blocked).toBe(1);
+    expect(await statuses()).toEqual({ first: 'ACTIVE', second: 'BLOCKED' });
+    expect(harness.invalidations).toEqual([
+      { hostname: 'sho.test', code: 'second' },
+    ]);
+
+    harness.failAuditFor(null);
+    expect(await run()).toBe(1);
+    expect(await statuses()).toEqual({ first: 'BLOCKED', second: 'BLOCKED' });
   });
 
   it('is safe to repeat', async () => {

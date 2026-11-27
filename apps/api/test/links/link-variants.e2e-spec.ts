@@ -140,6 +140,36 @@ describe('A/B test variants', () => {
     ]);
   });
 
+  it('holds the weight limit against simultaneous requests', async () => {
+    const responses = await Promise.all(
+      ['C', 'D', 'E'].map((name) =>
+        scene.post({ name, destinationUrl: VARIANT_B, weight: 40 }),
+      ),
+    );
+
+    expect(responses.map(({ status }) => status).sort()).toEqual([
+      201, 201, 422,
+    ]);
+    expect(await scene.listVariants()).toHaveLength(2);
+  });
+
+  it('holds the variant quota against simultaneous requests', async () => {
+    for (const weight of [10, 11, 12]) {
+      await scene.addVariant(weight);
+    }
+
+    const responses = await Promise.all(
+      ['D', 'E', 'F'].map((name) =>
+        scene.post({ name, destinationUrl: VARIANT_B, weight: 1 }),
+      ),
+    );
+
+    expect(responses.map(({ status }) => status).sort()).toEqual([
+      201, 422, 422,
+    ]);
+    expect(await scene.listVariants()).toHaveLength(4);
+  });
+
   it('does not count archived variants against the weight limit', async () => {
     const heavy = await scene.addVariant(90);
     await scene.act(heavy, 'archive');

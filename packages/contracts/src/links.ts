@@ -35,16 +35,23 @@ export const editableLinkStatusSchema = z.enum([
   LinkStatus.Disabled,
 ]);
 
+const NOT_AN_ABSOLUTE_URL = 'Must be an absolute http or https URL';
+
 /**
  * An absolute http(s) URL. Parsing yields the WHATWG serialisation, which is
  * the form that is stored, so the length limit applies to that form.
  */
 export const destinationUrlSchema = z
-  .url({
-    protocol: /^https?$/,
-    normalize: true,
-    error: 'Must be an absolute http or https URL',
-  })
+  // URL parsing alone would also take "http:example.com" for an absolute URL.
+  .string()
+  .regex(/^\s*https?:\/\//i, { error: NOT_AN_ABSOLUTE_URL })
+  .pipe(
+    z.url({
+      protocol: /^https?$/,
+      normalize: true,
+      error: NOT_AN_ABSOLUTE_URL,
+    }),
+  )
   .refine((url) => url.length <= DESTINATION_URL_MAX_LENGTH, {
     error: `Must be at most ${DESTINATION_URL_MAX_LENGTH} characters`,
   });
@@ -85,7 +92,13 @@ export type UpdateLinkRequest = z.infer<typeof updateLinkRequestSchema>;
 
 export const listLinksQuerySchema = z.object({
   /** Matches code, title, and destination, ignoring case. */
-  search: z.string().trim().min(1).max(LINK_SEARCH_MAX_LENGTH).optional(),
+  search: z
+    .string()
+    .trim()
+    .max(LINK_SEARCH_MAX_LENGTH)
+    // An emptied search box means no search, not a malformed one.
+    .transform((term) => (term === '' ? undefined : term))
+    .optional(),
   status: linkStatusSchema.optional(),
   domainId: z.uuid().optional(),
   limit: z.coerce

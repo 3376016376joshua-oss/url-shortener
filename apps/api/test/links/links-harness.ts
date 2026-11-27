@@ -34,6 +34,8 @@ export interface LinksHarness {
   auditEntries: AuditEntry[];
   /** Who the next requests are made as; `null` is nobody. */
   signIn(principal: Principal | null): void;
+  /** Makes recording an audit entry for this target fail; `null` stops it. */
+  failAuditFor(targetId: string | null): void;
   /** Clears what was recorded and signs out. Call between tests. */
   forget(): void;
   http(): TestAgent;
@@ -51,6 +53,7 @@ export async function createLinksHarness(
   let current: Principal | null = null;
   const invalidations: LinksHarness['invalidations'] = [];
   const auditEntries: AuditEntry[] = [];
+  let failingAuditTarget: string | null = null;
 
   const app = await createTestApp((builder) =>
     customize(
@@ -74,6 +77,9 @@ export async function createLinksHarness(
         .overrideProvider(AuditLog)
         .useValue({
           record: (entry: AuditEntry) => {
+            if (entry.target.id === failingAuditTarget) {
+              return Promise.reject(new Error('The audit log is down'));
+            }
             auditEntries.push(entry);
             return Promise.resolve();
           },
@@ -89,8 +95,12 @@ export async function createLinksHarness(
     signIn: (principal) => {
       current = principal;
     },
+    failAuditFor: (targetId) => {
+      failingAuditTarget = targetId;
+    },
     forget: () => {
       current = null;
+      failingAuditTarget = null;
       invalidations.length = 0;
       auditEntries.length = 0;
     },

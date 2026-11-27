@@ -38,6 +38,12 @@ describe('ending an A/B test', () => {
     expect(archived.status).toBe(200);
     expect(variantSchema.parse(archived.body).archivedAt).not.toBeNull();
     expect(again.body).toEqual(archived.body);
+    // Archiving twice changed the variant once, and is published once.
+    expect(
+      harness.auditEntries.filter(
+        ({ action }) => action === 'variant.archived',
+      ),
+    ).toHaveLength(1);
     expect(changed.status).toBe(409);
     expect(promoted.status).toBe(409);
     expect(promoted.body).toMatchObject({ code: 'CONFLICT' });

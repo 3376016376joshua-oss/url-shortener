@@ -195,6 +195,10 @@ describe('listing links', () => {
       ]);
     });
 
+    it('treats an empty search as no search', async () => {
+      expect(await codes({ search: '' })).toHaveLength(5);
+    });
+
     it.each([
       ['%', ['other']],
       ['_', ['other']],

@@ -67,12 +67,15 @@ export class LinksService {
       await this.riskCheck.assertAllowed(request.destinationUrl);
     }
     const changes = toColumnChanges(request);
-    const link = await this.dataSource.transaction(async (manager) => {
-      const locked = await lockEditableLink(manager, workspaceId, linkId);
-      return manager.save(Object.assign(locked, changes));
-    });
+    const { link, hostname } = await this.dataSource.transaction(
+      async (manager) => {
+        const locked = await lockEditableLink(manager, workspaceId, linkId);
+        await manager.save(Object.assign(locked.link, changes));
+        return locked;
+      },
+    );
 
-    await this.publisher.publish(link, {
+    await this.publisher.publish(link, hostname, {
       actor: actorOf(principal),
       action: 'link.updated',
       target: { type: 'link', id: link.id },
@@ -93,13 +96,15 @@ export class LinksService {
     linkId: string,
     principal: Principal,
   ): Promise<void> {
-    const link = await this.dataSource.transaction(async (manager) => {
-      const locked = await lockEditableLink(manager, workspaceId, linkId);
-      await manager.delete(Link, { id: locked.id });
-      return locked;
-    });
+    const { link, hostname } = await this.dataSource.transaction(
+      async (manager) => {
+        const locked = await lockEditableLink(manager, workspaceId, linkId);
+        await manager.delete(Link, { id: locked.link.id });
+        return locked;
+      },
+    );
 
-    await this.publisher.publish(link, {
+    await this.publisher.publish(link, hostname, {
       actor: actorOf(principal),
       action: 'link.deleted',
       target: { type: 'link', id: link.id },

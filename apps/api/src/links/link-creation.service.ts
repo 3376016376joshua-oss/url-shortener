@@ -84,7 +84,7 @@ export class LinkCreationService {
         : await this.insertWithCustomCode(values, request.code);
 
     this.metrics.incrementCounter(CounterName.LinksCreated, { kind });
-    await this.publisher.publish(link, {
+    await this.publisher.publish(link, domain.hostname, {
       actor: actorOf(principal),
       action: 'link.created',
       target: { type: 'link', id: link.id },

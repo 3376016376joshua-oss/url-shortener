@@ -8,13 +8,12 @@ import type {
 } from '@url-shortener/contracts/links';
 import { DataSource, IsNull, type EntityManager } from 'typeorm';
 import { LinkVariant } from '../database/entities/link-variant.entity.js';
-import type { Link } from '../database/entities/link.entity.js';
 import type { Principal } from '../identity/principal.js';
 import { DestinationRiskCheck } from './destination-risk-check.js';
 import { destinationHost } from './destination-policy.js';
 import { LinkChangePublisher, actorOf } from './link-change-publisher.js';
 import { variantNotFound } from './link-errors.js';
-import { lockEditableLink } from './link-lock.js';
+import { lockEditableLink, type LockedLink } from './link-lock.js';
 import { LinkPresenter } from './link-presenter.js';
 import { LinksService } from './links.service.js';
 import {
@@ -31,8 +30,7 @@ export interface VariantRef {
   variantId: string;
 }
 
-interface Changed {
-  link: Link;
+interface Changed extends LockedLink {
   variant: LinkVariant;
 }
 
@@ -75,14 +73,14 @@ export class VariantsService {
   ): Promise<VariantResponse> {
     await this.riskCheck.assertAllowed(request.destinationUrl);
     const changed = await this.dataSource.transaction(async (manager) => {
-      const link = await lockEditableLink(manager, workspaceId, linkId);
-      const active = await findActiveVariants(manager, link.id);
+      const locked = await lockEditableLink(manager, workspaceId, linkId);
+      const active = await findActiveVariants(manager, locked.link.id);
       assertRoomForVariant(active);
       assertWeightsFit([...active.map(({ weight }) => weight), request.weight]);
       const variant = await manager.save(
-        manager.create(LinkVariant, { ...request, linkId: link.id }),
+        manager.create(LinkVariant, { ...request, linkId: locked.link.id }),
       );
-      return { link, variant };
+      return { ...locked, variant };
     });
     await this.publish(changed, principal, 'variant.created', {
       weight: changed.variant.weight,
@@ -100,7 +98,12 @@ export class VariantsService {
       await this.riskCheck.assertAllowed(request.destinationUrl);
     }
     const changed = await this.dataSource.transaction(async (manager) => {
-      const link = await lockEditableLink(manager, ref.workspaceId, ref.linkId);
+      const locked = await lockEditableLink(
+        manager,
+        ref.workspaceId,
+        ref.linkId,
+      );
+      const { link } = locked;
       const active = await findActiveVariants(manager, link.id);
       const variant = await this.findVariant(manager, ref);
       assertNotArchived(variant);
@@ -115,7 +118,7 @@ export class VariantsService {
           other.id === variant.id ? variant.weight : other.weight,
         ),
       );
-      return { link, variant: await manager.save(variant) };
+      return { ...locked, variant: await manager.save(variant) };
     });
     await this.publish(changed, principal, 'variant.updated', {
       fields: Object.keys(request),
@@ -130,15 +133,29 @@ export class VariantsService {
     principal: Principal,
   ): Promise<VariantResponse> {
     const changed = await this.dataSource.transaction(async (manager) => {
-      const link = await lockEditableLink(manager, ref.workspaceId, ref.linkId);
+      const locked = await lockEditableLink(
+        manager,
+        ref.workspaceId,
+        ref.linkId,
+      );
+
       const variant = await this.findVariant(manager, ref);
-      if (variant.archivedAt === null) {
-        variant.archivedAt = new Date();
-        await manager.save(variant);
+      if (variant.archivedAt !== null) {
+        return { variant, archivedNow: null };
       }
-      return { link, variant };
+      variant.archivedAt = new Date();
+      await manager.save(variant);
+      return { variant, archivedNow: { ...locked, variant } };
     });
-    await this.publish(changed, principal, 'variant.archived', {});
+    // Archiving again changes nothing, so there is nothing to publish.
+    if (changed.archivedNow !== null) {
+      await this.publish(
+        changed.archivedNow,
+        principal,
+        'variant.archived',
+        {},
+      );
+    }
     return toVariantResponse(changed.variant);
   }
 
@@ -148,11 +165,16 @@ export class VariantsService {
    */
   async promote(ref: VariantRef, principal: Principal): Promise<LinkResponse> {
     const changed = await this.dataSource.transaction(async (manager) => {
-      const link = await lockEditableLink(manager, ref.workspaceId, ref.linkId);
+      const locked = await lockEditableLink(
+        manager,
+        ref.workspaceId,
+        ref.linkId,
+      );
+      const { link } = locked;
       const variant = await this.findVariant(manager, ref);
       assertNotArchived(variant);
       // The link's destination changes, so the check applies as on any edit.
-      await this.riskCheck.assertAllowed(variant.destinationUrl);
+      await this.riskCheck.assertAllowed(variant.destinationUrl, manager);
       link.destinationUrl = variant.destinationUrl;
       await manager.save(link);
       const archivedAt = new Date();
@@ -162,7 +184,7 @@ export class VariantsService {
         { archivedAt },
       );
       variant.archivedAt = archivedAt;
-      return { link, variant };
+      return { ...locked, variant };
     });
     await this.publish(changed, principal, 'variant.promoted', {
       destinationHost: destinationHost(changed.link.destinationUrl),
@@ -185,12 +207,12 @@ export class VariantsService {
   }
 
   private publish(
-    { link, variant }: Changed,
+    { link, hostname, variant }: Changed,
     principal: Principal,
     action: string,
     metadata: Record<string, unknown>,
   ): Promise<void> {
-    return this.publisher.publish(link, {
+    return this.publisher.publish(link, hostname, {
       actor: actorOf(principal),
       action,
       target: { type: 'variant', id: variant.id },

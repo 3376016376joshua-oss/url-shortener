@@ -44,6 +44,10 @@ describe('isLocalAddress', () => {
     'fd12:3456:789a::1',
     '::ffff:127.0.0.1',
     '::ffff:10.0.0.1',
+    '::7f00:1',
+    '64:ff9b::7f00:1',
+    '2002:7f00:1::',
+    'fec0::1',
   ])('refuses %s', (host) => {
     expect(isLocalAddress(host)).toBe(true);
   });
@@ -88,6 +92,8 @@ describe('assessDestination', () => {
     'http://2130706433/',
     'http://0x7f.1/',
     'http://[::ffff:7f00:1]/',
+    'http://[::127.0.0.1]/',
+    'http://localhost../',
   ])('refuses the local destination %s', (url) => {
     expect(assess(url)).toBe(DestinationRisk.LocalAddress);
   });
