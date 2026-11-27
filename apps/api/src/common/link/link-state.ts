@@ -1,4 +1,4 @@
-/** What is stored in `url_mappings.status`. Expiry is derived, never stored. */
+/** What is stored in `links.status`. Expiry is derived, never stored. */
 export const StoredLinkStatus = {
   Active: 'ACTIVE',
   /** Switched off by the workspace; it can switch it back on. */

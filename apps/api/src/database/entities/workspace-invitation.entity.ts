@@ -11,13 +11,14 @@ import { User } from './user.entity.js';
 import type { WorkspaceRole } from './workspace-member.entity.js';
 import { Workspace } from './workspace.entity.js';
 
+/**
+ * A pending invitation. The row is deleted when it is accepted, so the same
+ * person can be invited again later.
+ */
 @Entity({ name: 'workspace_invitations' })
 @Unique('uq_workspace_invitations_token_hash', ['tokenHash'])
 @Unique('uq_workspace_invitations_workspace_id_email', ['workspaceId', 'email'])
-@Check(
-  'ck_workspace_invitations_role',
-  `"role" IN ('owner', 'admin', 'member')`,
-)
+@Check('ck_workspace_invitations_role', `"role" IN ('admin', 'member')`)
 export class WorkspaceInvitation {
   @UuidPrimaryColumn('pk_workspace_invitations')
   id!: string;
@@ -47,9 +48,6 @@ export class WorkspaceInvitation {
 
   @Column({ name: 'expires_at', type: 'timestamptz' })
   expiresAt!: Date;
-
-  @Column({ name: 'accepted_at', type: 'timestamptz', nullable: true })
-  acceptedAt!: Date | null;
 
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;

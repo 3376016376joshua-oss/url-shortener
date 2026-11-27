@@ -24,7 +24,7 @@ export const UNKNOWN_COUNTRY = 'ZZ';
  * One click, after enrichment. Holds nothing that identifies the visitor: no
  * IP address, no visitor hash, no full referrer, no raw user agent.
  *
- * The table is partitioned by month on `clicked_at`, which is why the
+ * The table is partitioned by day on `clicked_at`, which is why the
  * timestamp is part of the primary key, and it deliberately has no foreign
  * key to `links`: events outlive nothing and are removed by dropping
  * partitions, not by cascading deletes.

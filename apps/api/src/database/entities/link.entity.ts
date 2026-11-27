@@ -87,7 +87,11 @@ export class Link {
   @CreateDateColumn({ name: 'created_at', type: 'timestamptz' })
   createdAt!: Date;
 
-  /** Changes only when someone edits the link, never on a click. */
+  /**
+   * Changes only when someone edits the link, never on a click. The click
+   * roll-up must therefore update `click_count` with raw SQL: the ORM's
+   * update helpers set this column on every update.
+   */
   @UpdateDateColumn({ name: 'updated_at', type: 'timestamptz' })
   updatedAt!: Date;
 }

@@ -4,6 +4,7 @@ import { AdminModule } from './admin/admin.module.js';
 import { AnalyticsModule } from './analytics/analytics.module.js';
 import { AuditModule } from './audit/audit.module.js';
 import { createValidationException } from './common/errors/validation-exception.factory.js';
+import { JobsModule } from './common/jobs/jobs.module.js';
 import { MetricsModule } from './common/metrics/metrics.module.js';
 import { RateLimitModule } from './common/rate-limit/rate-limit.module.js';
 import { AppConfigModule } from './config/app-config.module.js';
@@ -25,6 +26,7 @@ import { WorkspacesModule } from './workspaces/workspaces.module.js';
     DatabaseModule,
     RedisModule,
     MetricsModule,
+    JobsModule,
     RateLimitModule,
     IdentityModule,
     AuditModule,

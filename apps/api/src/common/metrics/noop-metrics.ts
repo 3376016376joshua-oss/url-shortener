@@ -5,4 +5,6 @@ import { Metrics } from './metrics.js';
 @Injectable()
 export class NoopMetrics extends Metrics {
   incrementCounter(): void {}
+
+  setGauge(): void {}
 }

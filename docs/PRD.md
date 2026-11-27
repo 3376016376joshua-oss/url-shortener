@@ -37,11 +37,12 @@ The workload shapes the design. Links are created rarely and validated carefully
 - Per-click targeting (by country, device, or time), password-protected links, link-in-bio pages, and deep links into mobile apps.
 - Forwarding query parameters from the short link to the destination, and a UTM builder.
 - Logos inside QR codes, and bulk import or export.
-- Hour-level analytics beyond the last 7 days, cross-filtering (for example country by device), workspace time zones (days are UTC), and a world map.
+- Hour-level analytics for ranges longer than 7 days, cross-filtering (for example country by device), workspace time zones (days are UTC), and a world map.
 - Analytics at ClickHouse or Kafka scale. The stated ceiling is in section 10.
 - A public abuse report form, reputation feeds, CAPTCHA, and human review queues.
 - Multi-region deployment and a CDN in front of redirects.
 - Native mobile apps, browser extensions, and a dark theme.
+- Changing an account's email address, and self-service account deletion. The operator handles both on request.
 
 ## 3. Users and roles
 
@@ -56,14 +57,14 @@ The workload shapes the design. Links are created rarely and validated carefully
 
 ### Permissions
 
-| Action                                          | Member | Admin | Owner | API key |
-| ----------------------------------------------- | ------ | ----- | ----- | ------- |
-| Read links, domains, analytics                  | Yes    | Yes   | Yes   | Yes     |
-| Create, edit, delete links, variants, QR styles | Yes    | Yes   | Yes   | Yes     |
-| Add, verify, remove domains                     | No     | Yes   | Yes   | No      |
-| Create and revoke API keys                      | No     | Yes   | Yes   | No      |
-| Invite and remove members, read the audit log   | No     | Yes   | Yes   | No      |
-| Change roles, rename or delete the workspace    | No     | No    | Yes   | No      |
+| Action                                                                 | Member | Admin | Owner | API key |
+| ---------------------------------------------------------------------- | ------ | ----- | ----- | ------- |
+| Read links, domains, analytics                                         | Yes    | Yes   | Yes   | Yes     |
+| Create, edit, delete links, variants, QR styles                        | Yes    | Yes   | Yes   | Yes     |
+| Add, verify, remove domains                                            | No     | Yes   | Yes   | No      |
+| Create and revoke API keys                                             | No     | Yes   | Yes   | No      |
+| Invite people, remove members, read the audit log                      | No     | Yes   | Yes   | No      |
+| Change roles, remove admins and owners, rename or delete the workspace | No     | No    | Yes   | No      |
 
 ## 4. Architecture
 
@@ -100,7 +101,7 @@ flowchart LR
 ```
 
 - **One codebase, two roles.** The API runs as stateless processes. `PROCESS_ROLE` chooses the duties: `web` serves HTTP, `worker` runs the click consumer and scheduled jobs, `all` does both. Redirect capacity and background work therefore scale apart.
-- **Routing by host.** The app host (from `APP_URL`) serves the dashboard and `/api`. Every other host is a short domain, the platform's own or a customer's, and only redirects. The management API is not reachable on short domains, and operational endpoints (`/internal`, `/metrics`) are not reachable from outside at all.
+- **Routing by host.** The app host (from `APP_URL`) serves the dashboard and `/api`. Every other host is a short domain, the platform's own or a customer's, and only redirects. The management API is not reachable on short domains, and operational endpoints (`/internal`, `/metrics`, `/health`) are not reachable from outside at all.
 - **The diagram's services are modules.** The diagram's gateway, URL service, and redirect service are modules of the API with one-directional dependencies (section 17), so any of them can become its own deployable later.
 - **Repository.** A pnpm monorepo: `apps/api` (NestJS), `apps/web` (the dashboard), `packages/contracts` (request and response schemas shared by both), `deploy/` (edge configuration).
 
@@ -110,17 +111,17 @@ Requirement ids are stable and referenced by the acceptance criteria (section 19
 
 ### Identity and workspaces
 
-| Id   | Requirement                                                                                           | Diagram |
-| ---- | ----------------------------------------------------------------------------------------------------- | ------- |
-| ID-1 | Sign up with email, name, and password. The account must verify its email before it can sign in.      | -       |
-| ID-2 | Sign in creates a server-side session carried in a cookie; sign out revokes it.                       | A       |
-| ID-3 | Password reset by emailed token. Responses never reveal whether an email has an account.              | I       |
-| ID-4 | A user can see and revoke their sessions; changing or resetting a password revokes all of them.       | I       |
-| ID-5 | Workspaces with owner, admin, and member roles as in section 3. Signing up creates a first workspace. | -       |
-| ID-6 | Invite a person by email with a role; the invitation is accepted by the account with that email.      | -       |
-| ID-7 | Workspace API keys: created and revoked by admins, shown once, stored hashed.                         | A       |
-| ID-8 | Every management request is authorised against the caller's role in the workspace named in the path.  | G, I    |
-| ID-9 | Mutating and security-relevant actions are written to an audit log that admins can read.              | I       |
+| Id   | Requirement                                                                                                                                   | Diagram |
+| ---- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| ID-1 | Sign up with email, name, and password. The account must verify its email before it can sign in, and can ask for the verification mail again. | -       |
+| ID-2 | Sign in creates a server-side session carried in a cookie; sign out revokes it.                                                               | A       |
+| ID-3 | Password reset by emailed token. Responses never reveal whether an email has an account.                                                      | I       |
+| ID-4 | A user can see and revoke their sessions; changing or resetting a password revokes all of them.                                               | I       |
+| ID-5 | Workspaces with owner, admin, and member roles as in section 3. Signing up creates a first workspace.                                         | -       |
+| ID-6 | Invite a person by email with a role; the invitation is accepted by the account with that email.                                              | -       |
+| ID-7 | Workspace API keys: created and revoked by admins, shown once, stored hashed.                                                                 | A       |
+| ID-8 | Every management request is authorised against the caller's role in the workspace named in the path.                                          | G, I    |
+| ID-9 | Mutating and security-relevant actions are written to an audit log that admins can read.                                                      | I       |
 
 ### Links
 
@@ -145,24 +146,24 @@ Requirement ids are stable and referenced by the acceptance criteria (section 19
 | RD-3  | Unknown code, malformed code, unknown host, or a domain that is not active: `404`.                                            | F, J    |
 | RD-4  | Disabled, expired, or blocked link: `410`. A stored status other than active wins over expiry.                                | F, G    |
 | RD-5  | Lookup is Redis cache-aside in front of Postgres, keyed by host and code. State is evaluated on every request, cached or not. | D, F    |
-| RD-6  | A cache hit is one Redis round trip and no database access.                                                                   | F       |
+| RD-6  | A cache hit costs the lookup one Redis round trip and no database access.                                                     | F       |
 | RD-7  | Unknown codes are cached negatively for 60 seconds. Concurrent misses for one key in one process share one database read.     | D, J    |
-| RD-8  | Redis down: answer from Postgres. Postgres down: keep serving cached links. Both down: `503`.                                 | J       |
+| RD-8  | Redis down: answer from Postgres. Postgres down: keep serving links whose cache entries are still alive. Both down: `503`.    | J       |
 | RD-9  | A link with an A/B test redirects to the destination chosen in section 11.                                                    | -       |
 | RD-10 | Each `302` hands one click to analytics without awaiting it. Analytics failure never fails or delays a redirect.              | H       |
 | RD-11 | Browsers get a small HTML page for `404` and `410`; other clients get the JSON error body.                                    | F       |
 
 ### Custom domains
 
-| Id   | Requirement                                                                                                                                        | Diagram |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| DM-1 | An admin adds a host name; the platform shows the DNS records to create.                                                                           | A       |
-| DM-2 | A domain becomes active only after two DNS checks pass: a TXT record proves ownership and the host resolves to the platform.                       | I       |
-| DM-3 | Pending domains are re-checked automatically and on request. Active domains are re-checked daily and deactivated after three consecutive failures. | J       |
-| DM-4 | Only active domains serve redirects, and each domain is its own namespace of codes.                                                                | E       |
-| DM-5 | HTTPS certificates are issued on first use, only for hosts the platform has verified.                                                              | A       |
-| DM-6 | The platform's own short domain is available to every workspace.                                                                                   | A       |
-| DM-7 | A domain can be removed once no links remain on it.                                                                                                | G       |
+| Id   | Requirement                                                                                                                                                            | Diagram |
+| ---- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| DM-1 | An admin adds a host name; the platform shows the DNS records to create. Several workspaces may claim the same host, and only the one that proves ownership serves it. | A, I    |
+| DM-2 | A domain becomes active only after two DNS checks pass: a TXT record proves ownership and the host resolves to the platform.                                           | I       |
+| DM-3 | Pending domains are re-checked automatically and on request. Active domains are re-checked daily and deactivated after three consecutive failures.                     | J       |
+| DM-4 | Only active domains serve redirects, and each domain is its own namespace of codes.                                                                                    | E       |
+| DM-5 | HTTPS certificates are issued on first use, only for hosts the platform has verified.                                                                                  | A       |
+| DM-6 | The platform's own short domain is available to every workspace.                                                                                                       | A       |
+| DM-7 | A domain can be removed once no links remain on it.                                                                                                                    | G       |
 
 ### QR codes
 
@@ -175,15 +176,15 @@ Requirement ids are stable and referenced by the acceptance criteria (section 19
 
 ### Analytics
 
-| Id   | Requirement                                                                                                                                        | Diagram |
-| ---- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
-| AN-1 | Every non-bot `302` is recorded with time, country, device type, operating system, browser, referrer host, source (link or QR), and A/B variant.   | H       |
-| AN-2 | Country comes from a local GeoIP database; device, operating system, and browser from the user agent.                                              | H       |
-| AN-3 | No IP address, full referrer, or raw user agent is ever stored. Unique visitors are estimated with a hash whose salt is destroyed within 48 hours. | H       |
-| AN-4 | Events travel through a Redis stream to a consumer that writes roll-ups in batches. Delivery is at-least-once; the effect is exactly-once.         | H       |
-| AN-5 | Per link: totals, a time series, unique visitors, and a breakdown for each dimension. Per workspace: totals and top links.                         | H       |
-| AN-6 | Raw events are kept 90 days; roll-ups for the life of the link.                                                                                    | H       |
-| AN-7 | Recognised bots and preview fetchers are redirected but not counted.                                                                               | H       |
+| Id   | Requirement                                                                                                                                                                                      | Diagram |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
+| AN-1 | Every `302` is recorded with time, country, device type, operating system, browser, referrer host, source (link or QR), and A/B variant.                                                         | H       |
+| AN-2 | Country comes from a local GeoIP database; device, operating system, and browser from the user agent.                                                                                            | H       |
+| AN-3 | No IP address, full referrer, or raw user agent is ever stored or queued. Unique visitors are estimated from a hash that exists only in Redis, salted with a value that expires within 48 hours. | H       |
+| AN-4 | Events travel through a Redis stream to a consumer that writes roll-ups in batches. Delivery is at-least-once; the effect is exactly-once.                                                       | H       |
+| AN-5 | Per link: totals, a time series, unique visitors, and a breakdown for each dimension. Per workspace: totals and top links.                                                                       | H       |
+| AN-6 | Raw events are kept 90 days; roll-ups for the life of the link.                                                                                                                                  | H       |
+| AN-7 | Recognised bots and preview fetchers are redirected but not counted.                                                                                                                             | H       |
 
 ### A/B destination testing
 
@@ -222,11 +223,12 @@ Requirement ids are stable and referenced by the acceptance criteria (section 19
 ### Accounts and sessions
 
 - **Passwords** are 12 to 128 characters, hashed with Argon2id, and never logged.
-- **Sign-up** always answers `202` and sends mail: a verification link to a new address, or a notice to an address that already has an account. Verification tokens last 24 hours and work once.
+- **Sign-up** always answers `202` and sends mail. A new address gets a verification link. An address with an unverified account gets a new link, and that account's name and password are replaced by the ones just submitted, so nobody can reserve someone else's address. An address with a verified account gets only a notice. Verification tokens last 24 hours and work once, and `POST /auth/verify-email/resend` sends a fresh one.
 - **Sign-in** needs a verified, enabled account. It issues a 256-bit random session token in a `session` cookie that is `HttpOnly`, `Secure` in production, `SameSite=Lax`, and scoped to the app host. Only the token's SHA-256 is stored.
 - **Session lifetime.** A session expires after 14 days without use and at most 90 days after sign-in.
-- **Failed sign-ins** always return the same `401`. After 5 failures for one account within 15 minutes, that account's sign-in is refused for 15 minutes.
+- **Failed sign-ins** always return the same `401`, whatever the reason, including a lockout. After 5 failures for one account from one client address within 15 minutes, sign-in to that account from that address is refused for 15 minutes; after 50 failures for one account from anywhere within an hour, it is refused for everyone for 15 minutes. A password reset clears both. The counters live in Redis; when Redis is unavailable, sign-in is refused with `503` rather than left unguarded.
 - **Password reset** always answers `202`. Reset tokens last 1 hour and work once. A successful reset revokes every session of the account.
+- **Mail throttle.** At most 3 mails of one kind go to one address per hour. Further requests still answer `202` and send nothing.
 - **Cross-site request forgery.** A state-changing request authenticated by the session cookie must carry an `Origin` header equal to `APP_URL`, or it is refused with `403`. Requests authenticated by API key are exempt, because a browser never attaches one by itself.
 
 ### API keys
@@ -238,8 +240,16 @@ Requirement ids are stable and referenced by the acceptance criteria (section 19
 ### Workspaces
 
 - Signing up creates a workspace owned by the new user. A user can create more and belong to many.
-- **Invitations** are sent by admins and owners, name an email and a role (`admin` or `member`), and last 7 days. Accepting requires being signed in as the invited email. Roles are changed only by owners.
-- The last owner cannot leave or be demoted. Deleting a workspace deletes its links, domains, keys, and analytics; its links then answer `404`.
+- **Invitations** are sent by admins and owners, name an email and a role (`admin` or `member`), and last 7 days. Accepting requires being signed in as the invited email, and deletes the invitation. Roles are changed only by owners.
+- **Removing people.** An admin can remove members. Only an owner can remove an admin or another owner. Anyone can leave, except the last owner, who also cannot be demoted.
+- **Deleting a workspace** deletes its links, domains, keys, and analytics. Before the rows go, deletion invalidates the cache entry of every link and domain, in batches, so the links answer `404` straight away rather than when their cache entries expire.
+
+### Audit log
+
+- **Recorded:** sign-in, sign-out, and failed sign-in bursts; password changes and resets; every create, change, and delete of a link, variant, domain, API key, member, or invitation; domain verification results; every platform admin action.
+- **Each entry** names the workspace, the actor (a user, an API key, or the system), the action as `<target>.<verb>` (for example `link.created`), the target, the time, and a small metadata object. Metadata never holds secrets or full destination URLs.
+- **Reading it.** Admins and owners read their workspace's log, newest first, through `GET .../audit-log`. Entries cannot be edited or deleted through the product and are kept for the life of the workspace.
+- An action that cannot be recorded does not report success.
 
 ### Quotas
 
@@ -297,15 +307,15 @@ The host is the request's `Host` header, lowercased, without a port.
 
 | Key                  | Value                                                                                                   | TTL                                                             |
 | -------------------- | ------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------- |
-| `domain:{host}`      | `{ "id": "...", "status": "ACTIVE" }` or `{ "notFound": true }`                                         | 5 minutes; 60 s when not found                                  |
+| `domain:{host}`      | `{ "id": "...", "status": "ACTIVE" }` or `{ "notFound": true }`                                         | 1 hour; 60 s when not found                                     |
 | `link:{host}:{code}` | `{ "id", "destinationUrl", "status", "expiresAt", "variants": [{ "id", "destinationUrl", "weight" }] }` | `min(1 hour, time to expiry)`; 60 s for an already expired link |
 | `link:{host}:{code}` | `{ "notFound": true }`                                                                                  | 60 s                                                            |
 | either key           | `{ "invalidated": true }`, a tombstone                                                                  | 5 s                                                             |
 
-1. **Read.** One `MGET` of both keys. On a hit for both, evaluate the domain status and the link state, choose the destination, and answer. On a miss, read Postgres, populate with `SET ... NX`, then answer. A tombstone counts as a miss that is answered from Postgres and not populated.
+1. **Read.** One `MGET` of both keys. On a hit for both, evaluate the domain status and the link state, choose the destination, and answer. On a miss, read Postgres (for the domain, the row that is `ACTIVE` or `BLOCKED` for that host), populate with `SET ... NX`, then answer. A tombstone counts as a miss that is answered from Postgres and not populated.
 2. **A hit is not a free pass.** Domain status, link status, and expiry are evaluated on every request. A link that expires while cached answers `410` at the moment it expires.
 3. **Write.** Commit to Postgres first, then overwrite the affected key with a tombstone: the link key when a link or its variants change, the domain key when a domain changes. A plain `DEL` would lose a race, because a reader that read the old row before the commit could write it back afterwards and keep a disabled link alive for the full TTL. With a tombstone in place that reader's `SET ... NX` fails, and after 5 seconds, longer than any read can take under the timeouts in section 13, the next miss repopulates from the committed row.
-4. **Lost invalidation.** This is the one case where a stale entry can be served. If writing the tombstone fails because Redis is unreachable at that moment, the write still succeeds (Postgres is the truth), the failure is logged and counted, and the TTL bounds the staleness to 1 hour for a link and 5 minutes for a domain.
+4. **Lost invalidation.** This is the one case where a stale entry can be served. If writing the tombstone fails because Redis is unreachable at that moment, the write still succeeds (Postgres is the truth), the failure is logged and counted, and the 1 hour TTL bounds the staleness.
 5. **Redis errors** on the read path are treated as a miss and answered from Postgres under a 100 ms Redis timeout.
 
 ### Redirect response
@@ -322,7 +332,7 @@ The redirect sets no cookie. Query parameters on the short URL are not forwarded
 
 ### Connecting a domain
 
-1. An admin enters a host name, for example `go.brand.com`. It must be a syntactically valid public host name in ASCII form, not an IP address, not already connected by anyone, and not a platform host or one of its subdomains.
+1. An admin enters a host name, for example `go.brand.com`. It must be a syntactically valid public host name in ASCII form, not an IP address, not a platform host or one of its subdomains, and not a host a platform admin has blocked (`409`).
 2. The platform shows two records to create:
 
    | Record  | Name                                | Value                           | Proves                            |
@@ -334,12 +344,15 @@ The redirect sets no cookie. Query parameters on the short URL are not forwarded
 
 3. The domain is `PENDING` until both checks pass, then `ACTIVE`.
 
+Adding a host is a **claim**, not a reservation. Any number of workspaces can hold a pending claim to the same host, each with its own token, and none of them learns about the others. Only the claim whose token appears in the host's DNS can become active, so nobody can block a domain they do not control. If a host changes hands, the new owner's claim verifies and the previous one is deactivated in the same transaction.
+
 ### Verification
 
-- **Ownership check:** the TXT record at `_shortener-challenge.<host>` equals the token. Without it, a workspace could claim a host whose DNS still points at the platform from a previous owner.
+- **Ownership check:** the TXT record at `_shortener-challenge.<host>` equals the token. Without it, a workspace could take over a host whose DNS still points at the platform from a previous owner.
 - **Routing check:** the host has a `CNAME` to `CNAME_TARGET`, or its `A`/`AAAA` records are all among the target's.
 - **DNS only.** Verification never makes an HTTP request to a customer-supplied host, so it cannot be used to probe internal networks.
 - **Schedule.** A pending domain is checked on creation, when an admin asks (at most once a minute), every minute for the first hour, then hourly. After 72 hours without success it becomes `INACTIVE`. An active domain is checked daily and becomes `INACTIVE` after three consecutive failures. An admin can re-verify an inactive domain at any time.
+- The result of each check is stored per record, which is what the dashboard shows next to each DNS record.
 - Every status change tombstones `domain:{host}`, so redirects start or stop within seconds.
 
 | Status     | Redirects  | Meaning                        |
@@ -351,7 +364,7 @@ The redirect sets no cookie. Query parameters on the short URL are not forwarded
 
 ### HTTPS
 
-The edge is Caddy with on-demand TLS. On the first HTTPS request for a host it has no certificate for, Caddy asks the API `GET /internal/tls/authorize?domain=<host>` and requests a certificate from Let's Encrypt only on `200`. The endpoint answers `200` for platform hosts and `ACTIVE` domains and `404` otherwise, from the same `domain:{host}` cache entry the redirect uses, and is reachable only on the internal network. Certificates renew automatically. Plain HTTP on a short domain redirects to HTTPS.
+The edge is Caddy with on-demand TLS. On the first HTTPS request for a host it has no certificate for, Caddy asks the API `GET /internal/tls/authorize?domain=<host>` and requests a certificate from Let's Encrypt only on `200`. The endpoint answers `200` for platform hosts and `ACTIVE` domains and `404` otherwise, straight from Postgres, because the question is asked once per certificate rather than once per request. It is reachable only on the internal network. Certificates renew automatically. Plain HTTP on a short domain redirects to HTTPS.
 
 ### The platform domain
 
@@ -372,7 +385,7 @@ The edge is Caddy with on-demand TLS. On the first HTTPS request for a host it h
   | `errorCorrection`          | `L`, `M`, `Q`, `H`                        | `M`                |
 
 - **Saved style.** `PUT .../links/{linkId}/qr-style` stores a link's style. Rendering uses the saved style, and query parameters override it for one request.
-- **Scannability.** A foreground and background with a contrast ratio below 3:1 is refused with `400`, because such codes do not scan reliably.
+- **Scannability.** The style schema rejects a foreground and background whose contrast ratio is below 3:1 (`400`), because such codes do not scan reliably.
 - **Caching.** Responses carry an `ETag` and `Cache-Control: private, max-age=300`.
 - A QR code keeps working when the link's destination changes, because it encodes the short URL, never the destination.
 
@@ -382,16 +395,18 @@ The edge is Caddy with on-demand TLS. On the first HTTPS request for a host it h
 
 ```mermaid
 flowchart LR
-  r[Redirect answers 302] -.->|not awaited| p[Recorder, in process<br/>country lookup, visitor hash]
-  p -.->|XADD clicks MAXLEN ~ 1000000| s[(Redis stream)]
-  s -.->|XREADGROUP, batch up to 500| c[Consumer, worker role<br/>device, OS, browser]
+  r[Redirect answers 302] -.->|not awaited| p[Recorder, in process<br/>country, device, OS, browser,<br/>referrer host, visitor hash]
+  p -.->|PFADD visitors of the day| h[(Redis<br/>unique-visitor sketches)]
+  p -.->|XADD clicks| s[(Redis stream)]
+  s -.->|XREADGROUP, batch up to 500| c[Consumer, worker role]
+  h -.->|PFCOUNT| c
   c -.->|one transaction| db[(click_events<br/>daily roll-ups<br/>links.click_count)]
   c -.->|XACK after commit| s
 ```
 
-- **Recorder.** Runs after the redirect decision, is never awaited, and never throws. It turns the IP address into a country and a visitor hash immediately, in memory, and puts the event on the stream without the IP. On any failure the event is dropped and counted.
-- **Stream.** Capped at about one million entries. If the consumer falls that far behind, the oldest events are discarded rather than letting Redis grow without bound.
-- **Consumer.** One consumer group on its own Redis connection, in processes with the worker role. In a single transaction per batch it inserts the events with `ON CONFLICT DO NOTHING`, and for the rows actually inserted it increments the roll-ups and `links.click_count`. It acknowledges only after the commit. Entries left pending by a crashed consumer are reclaimed after 60 seconds. It creates its group when missing, at start-up and whenever Redis reports it gone. Events for links that no longer exist are acknowledged and discarded.
+- **Recorder.** Runs after the redirect decision, is never awaited, and never throws. Everything personal is reduced here, in memory, before anything leaves the process: the IP address becomes a country and a visitor hash, the user agent becomes a device type, an operating system, and a browser, and the referrer becomes a host. The recorder adds the hash to the day's unique-visitor sketch for the link and puts the reduced event on the stream. On any failure the event is dropped and counted.
+- **Stream.** Holds reduced events only: no IP address, no user agent, no full referrer, no visitor hash. It is capped at about one million entries, and the consumer trims entries older than 24 hours. If the consumer falls a million events behind, the oldest are discarded rather than letting Redis grow without bound.
+- **Consumer.** One consumer group on its own Redis connection, in processes with the worker role. In a single transaction per batch it inserts the events with `ON CONFLICT DO NOTHING`, and for the rows actually inserted it increments the roll-ups and `links.click_count`. It then reads the size of each affected sketch and raises `unique_visitors` to it. It acknowledges only after the commit. Entries left pending by a crashed consumer are reclaimed after 60 seconds. It creates its group when missing, at start-up and whenever Redis reports it gone. Events for links that no longer exist are acknowledged and discarded.
 - **Consistency.** At-least-once delivery, exactly-once effect through `event_id`. A click appears on the dashboard within 30 seconds at the 95th percentile.
 
 ### What is recorded
@@ -408,10 +423,11 @@ flowchart LR
 
 ### Privacy
 
-- The **IP address** exists only in memory, for the country lookup and the visitor hash. It is never stored, queued, or logged. The edge's access logs for short domains omit it.
-- The **visitor hash** is `HMAC-SHA256(salt of the day, IP + user agent)`, truncated to 16 bytes. The salt is random, generated once per UTC day, and deleted after 48 hours together with that day's hashes. After that, nothing stored can be traced to a visitor or even linked across days.
-- **Unique visitors** are therefore exact per day and an estimate over a range: a range sums its days, so a visitor who returns on two days counts twice. The dashboard labels the figure accordingly.
-- Raw events hold no hash at all. No cookie is set on any short domain.
+- The **IP address**, the **raw user agent**, and the **full referrer** exist only in the memory of the process that served the redirect. They are never stored, queued, or logged. The edge's access logs for short domains omit the IP address.
+- The **visitor hash** is `HMAC-SHA256(salt of the day, IP + user agent)`. It is used once, to add the visitor to a HyperLogLog sketch in Redis (`visitors:{linkId}:{day}`), and is then discarded. A sketch holds a few kilobytes of counters from which no hash can be read back.
+- The **salt** is random, generated once per UTC day, and kept only in Redis with a 48 hour expiry, as are the sketches. Neither is ever written to Postgres, so neither appears in a database backup. Redis itself is not backed up (section 13).
+- **Unique visitors** are an estimate in two honest ways. Within a day the sketch is accurate to about 1%. Over a range the days are summed, so a visitor who returns on two days counts twice. The dashboard labels the figure accordingly. If Redis is lost during a day, that day's count restarts and under-reports.
+- No cookie is set on any short domain, and nothing stored anywhere can be traced to a visitor.
 
 ### Bots
 
@@ -419,13 +435,14 @@ A user agent recognised as a crawler, monitor, or link-preview fetcher is redire
 
 ### Storage and retention
 
-| Data                                         | Kept             | Removed by                       |
-| -------------------------------------------- | ---------------- | -------------------------------- |
-| `click_events`, raw, partitioned by month    | 90 days          | Dropping whole partitions        |
-| `link_daily_totals`, `link_daily_breakdowns` | Life of the link | Cascade when the link is deleted |
-| `link_daily_visitors`, `visitor_salts`       | 48 hours         | Daily job                        |
+| Data                                         | Where      | Kept                                             | Removed by                       |
+| -------------------------------------------- | ---------- | ------------------------------------------------ | -------------------------------- |
+| `click_events`, raw, one partition per day   | Postgres   | 90 days                                          | Dropping whole partitions        |
+| `link_daily_totals`, `link_daily_breakdowns` | Postgres   | Life of the link                                 | Cascade when the link is deleted |
+| Daily salt and unique-visitor sketches       | Redis only | 48 hours                                         | Key expiry                       |
+| Click stream entries                         | Redis only | 24 hours, or until a million newer entries exist | The consumer                     |
 
-A daily job creates the partitions for the next two months and drops those past retention. A default partition catches any event outside the prepared range, and a non-empty default partition raises an alert.
+A job that runs at worker start-up and every day creates the partitions for today and the next 7 days and drops those older than 90 days. A default partition catches any event outside the prepared range; when the job creates a partition it first moves any rows waiting in the default partition for that day, and a non-empty default partition raises an alert.
 
 ### Queries
 
@@ -461,7 +478,7 @@ Assignment is a pure function that cannot fail a redirect. If the cached variant
 
 ### Results and ending a test
 
-- Clicks are reported per variant and for the control, as totals and as a daily series, through the `variant` breakdown (section 10).
+- Clicks are reported per variant and for the control, for any date range, through the `variant` breakdown (section 10).
 - The platform measures clicks, not conversions. It shows how traffic was split; it cannot tell which destination performed better.
 - **Promote** a variant: its destination becomes the link's destination and every variant is archived. **Archive** a variant: its traffic returns to the control. Archived variants receive no traffic and keep their name and history.
 
@@ -492,7 +509,7 @@ A single-page application served as static files by the edge on the app host, ca
 | Tenancy              | One authorisation rule (section 6), enforced on every workspace route. Queries are always scoped by workspace.                                                           |
 | Input                | Every request body, query, and path parameter is validated against a schema. Bodies are JSON only, capped at 10 kB.                                                      |
 | Transport            | HTTPS everywhere through the edge; HSTS on the app host; security headers and a content security policy on the dashboard.                                                |
-| Host separation      | The management API is served only on the app host. `/internal` and `/metrics` are not exposed.                                                                           |
+| Host separation      | The management API is served only on the app host. `/internal`, `/metrics`, and `/health` are not exposed.                                                               |
 | Secrets              | From the environment only, validated at start-up, never logged.                                                                                                          |
 | Logging              | Destination URLs are never logged in full, because they can carry tokens; logs carry the link id and destination host. IP addresses are not logged on the redirect path. |
 | Dependencies         | A frozen lockfile and a minimum release age for new versions.                                                                                                            |
@@ -519,6 +536,7 @@ Fixed 60 second windows, counted in Redis with an atomic increment-and-expire.
 
 - A request must pass every policy that applies. A refusal is `429 RATE_LIMITED` with `Retry-After`.
 - The limiter is a global guard and authentication is a guard on controllers, so limiting always runs first and guessing credentials is itself limited.
+- Policies are matched by method and path inside the limiter, so no other workstream marks its routes.
 - A request the body parser rejects (malformed JSON, over 10 kB) is answered before the limiter and is not counted.
 - The client IP honours `TRUST_PROXY_HOPS`. An IPv6 client is keyed by its /64 prefix, because one subscriber controls a whole /64.
 - If Redis is unavailable the limiter fails open for redirects and fails closed with `503` for the management API.
@@ -527,21 +545,21 @@ Fixed 60 second windows, counted in Redis with an atomic increment-and-expire.
 
 ### Reliability
 
-| Failure                 | Behaviour                                                                                                        |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Redis unavailable       | Redirects are answered from Postgres. Clicks are dropped and counted. Management API rate limiting fails closed. |
-| Postgres unavailable    | Cached links keep redirecting. Uncached codes and every write answer `503`.                                      |
-| Both unavailable        | `503`. No unbounded retries.                                                                                     |
-| Worker down             | Redirects are unaffected. Clicks queue in the stream up to its cap and are processed on recovery.                |
-| GeoIP database missing  | Clicks are recorded with country `ZZ`. A warning is logged at start-up.                                          |
-| Mail provider down      | Sign-up and reset still answer `202`; the send is retried with backoff for 15 minutes, then logged as failed.    |
-| Lost cache invalidation | Bounded by the TTLs in section 7, logged, and counted.                                                           |
+| Failure                 | Behaviour                                                                                                                                                                     |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Redis unavailable       | Redirects are answered from Postgres. Clicks and unique visitors are not counted, and the loss is counted. Management API rate limiting fails closed, and sign-in is refused. |
+| Postgres unavailable    | Links keep redirecting while their cache entries live, up to 1 hour. Uncached codes and every write answer `503`.                                                             |
+| Both unavailable        | `503`. No unbounded retries.                                                                                                                                                  |
+| Worker down             | Redirects are unaffected. Clicks queue in the stream up to its cap and are processed on recovery.                                                                             |
+| GeoIP database missing  | Clicks are recorded with country `ZZ`. A warning is logged at start-up.                                                                                                       |
+| Mail provider down      | Sign-up and reset still answer `202`. The send is tried three times in quick succession, then logged and counted as failed; the person asks again.                            |
+| Lost cache invalidation | Bounded by the TTLs in section 7, logged, and counted.                                                                                                                        |
 
 Timeouts: Redis command 100 ms, Postgres statement 2 s, Postgres connect 2 s, DNS lookup 3 s.
 
 ### Observability
 
-- `GET /health` is liveness and touches no dependency. `GET /health/ready` reports Postgres and Redis: `ok`, `degraded` with one down (still `200`, because the process keeps serving what it can), `unavailable` with `503` only when both are down.
+- `GET /health` is liveness and touches no dependency. `GET /health/ready` reports Postgres and Redis: `ok`, `degraded` with one down (still `200`, because the process keeps serving what it can), `unavailable` with `503` only when both are down. Both are for the orchestrator and are not reachable through the edge.
 - `GET /metrics` in Prometheus format, on the internal network only:
 
   | Metric                                   | Type      | Labels                                                                |
@@ -558,6 +576,7 @@ Timeouts: Redis command 100 ms, Postgres statement 2 s, Postgres connect 2 s, DN
   | `domain_verifications_total`             | Counter   | `result` = `verified` / `pending` / `failed`                          |
   | `sign_ins_total`                         | Counter   | `result` = `success` / `failure` / `locked`                           |
   | `qr_codes_rendered_total`                | Counter   | `format`                                                              |
+  | `job_runs_total`                         | Counter   | `job`, `result` = `success` / `failure`                               |
 
   Route labels use the route pattern, never the actual path, to keep cardinality bounded.
 
@@ -577,7 +596,9 @@ A restore is rehearsed before launch and every quarter after.
 
 ### Deployment
 
-- **Shape.** Containers: `edge` (Caddy, the only public entry point), `api` with the web role (two or more), `api` with the worker role (one or more), Postgres, Redis, and a one-shot `migrate` job that runs before a new version starts.
+- **Shape.** Containers: `edge` (Caddy, the only public entry point), `api` with the web role (two or more), `api` with the worker role (one or more), Redis, and a one-shot `migrate` job that runs before a new version starts. Postgres is a managed service (recommended, decision 1) or a container with WAL archiving.
+- **Background work** runs only in the worker role. Scheduled jobs take a Postgres advisory lock per job, so running several workers never runs a job twice at once.
+- **Redis** has a memory limit and evicts only keys that have a TTL (`volatile-lru`), so cache entries make room under pressure and the click stream is never evicted. Memory above 80% raises an alert.
 - **Stateless API.** Any replica can serve any request, so rolling out is replacing replicas one at a time.
 - **Migrations** are explicit, run once per release, and backward compatible with the previous version (add first, remove in a later release), so a release can be rolled back.
 - **Edge.** One edge node keeps certificates on a local volume. More than one needs a shared certificate store.
@@ -587,16 +608,16 @@ A restore is rehearsed before launch and every quarter after.
 
 Measured monthly.
 
-| Objective                                                                           | Target                           |
-| ----------------------------------------------------------------------------------- | -------------------------------- |
-| Redirect availability at the edge (`302`, `404`, and `410` are all correct answers) | 99.95%                           |
-| Redirect latency at the API, cache hit                                              | p95 under 20 ms, p99 under 50 ms |
-| Redirect latency at the API, cache miss                                             | p95 under 100 ms                 |
-| Management API availability                                                         | 99.9%                            |
-| Management API latency                                                              | p95 under 300 ms                 |
-| Click to visible on the dashboard                                                   | p95 under 30 s                   |
-| Cache hit ratio in steady state                                                     | Above 90%                        |
-| Domain active after correct DNS is visible                                          | Within 2 minutes                 |
+| Objective                                                                           | Target                                                                                    |
+| ----------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Redirect availability at the edge (`302`, `404`, and `410` are all correct answers) | 99.9% on the single-host shape; 99.95% needs a second host and managed Postgres and Redis |
+| Redirect latency at the API, cache hit                                              | p95 under 20 ms, p99 under 50 ms                                                          |
+| Redirect latency at the API, cache miss                                             | p95 under 100 ms                                                                          |
+| Management API availability                                                         | 99.9%                                                                                     |
+| Management API latency                                                              | p95 under 300 ms                                                                          |
+| Click to visible on the dashboard                                                   | p95 under 30 s                                                                            |
+| Cache hit ratio in steady state                                                     | Above 90%                                                                                 |
+| Domain active after correct DNS is visible                                          | Within 2 minutes during the first hour after it is added, and on demand afterwards        |
 
 Latency and hit-ratio objectives are verified by a load test before launch (section 17, hardening); they are not gated in CI.
 
@@ -621,25 +642,25 @@ The base path is `/api/v1` on the app host. Bodies are JSON. Timestamps are ISO 
 
 `code` is the machine-readable contract; `message` is for people and may change.
 
-| Status | `code`                                                                          | When                                                                                           |
-| ------ | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
-| `400`  | `VALIDATION_FAILED`                                                             | Malformed JSON, or a body, query, or path parameter that fails its schema                      |
-| `401`  | `UNAUTHENTICATED`                                                               | Missing, invalid, or expired credentials; wrong email or password                              |
-| `403`  | `FORBIDDEN`                                                                     | Role too low, or a cross-site request                                                          |
-| `404`  | `NOT_FOUND`, `LINK_NOT_FOUND`                                                   | Unknown resource, a workspace the caller is not in, or an unknown short code                   |
-| `409`  | `CODE_TAKEN`, `CONFLICT`                                                        | Custom code in use on the domain; domain already connected; domain still has links; last owner |
-| `410`  | `LINK_DISABLED`, `LINK_EXPIRED`                                                 | Redirect to a disabled, blocked, or expired link                                               |
-| `413`  | `PAYLOAD_TOO_LARGE`                                                             | Body over 10 kB                                                                                |
-| `422`  | `CODE_RESERVED`, `DESTINATION_BLOCKED`, `DOMAIN_NOT_VERIFIED`, `QUOTA_EXCEEDED` | A well-formed request refused by a business rule                                               |
-| `429`  | `RATE_LIMITED`                                                                  | Rate limit exceeded; `Retry-After` is set                                                      |
-| `500`  | `INTERNAL_ERROR`                                                                | Unexpected failure. No internal detail; the cause is logged with the request id.               |
-| `503`  | `SERVICE_UNAVAILABLE`, `CODE_GENERATION_EXHAUSTED`                              | A required dependency is down, or no unique code could be allocated                            |
+| Status | `code`                                                                          | When                                                                                                                         |
+| ------ | ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `400`  | `VALIDATION_FAILED`                                                             | Malformed JSON, or a body, query, or path parameter that fails its schema                                                    |
+| `401`  | `UNAUTHENTICATED`                                                               | Missing, invalid, or expired credentials; wrong email or password                                                            |
+| `403`  | `FORBIDDEN`                                                                     | Role too low, or a cross-site request                                                                                        |
+| `404`  | `NOT_FOUND`, `LINK_NOT_FOUND`                                                   | Unknown resource, a workspace the caller is not in, or an unknown short code                                                 |
+| `409`  | `CODE_TAKEN`, `CONFLICT`                                                        | Custom code in use on the domain; host name blocked or already claimed by this workspace; domain still has links; last owner |
+| `410`  | `LINK_DISABLED`, `LINK_EXPIRED`                                                 | Redirect to a disabled, blocked, or expired link                                                                             |
+| `413`  | `PAYLOAD_TOO_LARGE`                                                             | Body over 10 kB                                                                                                              |
+| `422`  | `CODE_RESERVED`, `DESTINATION_BLOCKED`, `DOMAIN_NOT_VERIFIED`, `QUOTA_EXCEEDED` | A well-formed request refused by a business rule                                                                             |
+| `429`  | `RATE_LIMITED`                                                                  | Rate limit exceeded; `Retry-After` is set                                                                                    |
+| `500`  | `INTERNAL_ERROR`                                                                | Unexpected failure. No internal detail; the cause is logged with the request id.                                             |
+| `503`  | `SERVICE_UNAVAILABLE`, `CODE_GENERATION_EXHAUSTED`                              | A required dependency is down, or no unique code could be allocated                                                          |
 
 `400` means the request is malformed; `422` means it is well-formed but refused. Any other client error raised by the framework carries `REQUEST_REJECTED`.
 
 ### Resources
 
-A **link**. `status` is the effective state: `ACTIVE`, `DISABLED`, `BLOCKED`, or `EXPIRED`.
+A **link**. `status` is the effective state: `ACTIVE`, `DISABLED`, `BLOCKED`, or `EXPIRED`. `qrStyle` is the saved QR styling, or `null` for the defaults.
 
 ```json
 {
@@ -654,6 +675,7 @@ A **link**. `status` is the effective state: `ACTIVE`, `DISABLED`, `BLOCKED`, or
   "title": "Spring launch",
   "status": "ACTIVE",
   "expiresAt": null,
+  "qrStyle": null,
   "clickCount": 1284,
   "variantCount": 1,
   "createdAt": "2026-11-27T08:00:00.000Z",
@@ -734,56 +756,57 @@ A **variant**.
 
 `{ws}` stands for `workspaces/{workspaceId}`. Role is the minimum role; Key says whether an API key may call it.
 
-| Method and path                                                                                      | Role              | Key | Success                                               |
-| ---------------------------------------------------------------------------------------------------- | ----------------- | --- | ----------------------------------------------------- |
-| **Account**                                                                                          |                   |     |                                                       |
-| `POST /auth/sign-up` `{ email, name, password }`                                                     | Public            |     | `202`                                                 |
-| `POST /auth/verify-email` `{ token }`                                                                | Public            |     | `204`                                                 |
-| `POST /auth/sign-in` `{ email, password }`                                                           | Public            |     | `200` user, sets the session cookie                   |
-| `POST /auth/sign-out`                                                                                | Session           | No  | `204`                                                 |
-| `POST /auth/password-reset` `{ email }`                                                              | Public            |     | `202`                                                 |
-| `POST /auth/password-reset/confirm` `{ token, password }`                                            | Public            |     | `204`                                                 |
-| `GET /me`                                                                                            | Any               | Yes | `200` user or key identity, with workspaces and roles |
-| `PATCH /me` `{ name?, currentPassword?, newPassword? }`                                              | Session           | No  | `200`                                                 |
-| `GET /me/sessions`, `DELETE /me/sessions/{sessionId}`                                                | Session           | No  | `200`, `204`                                          |
-| **Workspaces**                                                                                       |                   |     |                                                       |
-| `POST /workspaces` `{ name }`                                                                        | Session           | No  | `201`                                                 |
-| `GET /{ws}`                                                                                          | Member            | Yes | `200`                                                 |
-| `PATCH /{ws}` `{ name }`, `DELETE /{ws}`                                                             | Owner             | No  | `200`, `204`                                          |
-| `GET /{ws}/members`                                                                                  | Member            | No  | `200`                                                 |
-| `PATCH /{ws}/members/{userId}` `{ role }`                                                            | Owner             | No  | `200`                                                 |
-| `DELETE /{ws}/members/{userId}`                                                                      | Admin, or oneself | No  | `204`                                                 |
-| `GET /{ws}/invitations`, `POST /{ws}/invitations` `{ email, role }`, `DELETE /{ws}/invitations/{id}` | Admin             | No  | `200`, `201`, `204`                                   |
-| `POST /invitations/accept` `{ token }`                                                               | Session           | No  | `200` workspace                                       |
-| `GET /{ws}/api-keys`, `POST /{ws}/api-keys` `{ name, expiresAt? }`, `DELETE /{ws}/api-keys/{id}`     | Admin             | No  | `200`, `201` with the key once, `204`                 |
-| `GET /{ws}/audit-log`                                                                                | Admin             | No  | `200` list                                            |
-| **Domains**                                                                                          |                   |     |                                                       |
-| `GET /{ws}/domains`                                                                                  | Member            | Yes | `200` list, including platform domains                |
-| `POST /{ws}/domains` `{ hostname }`                                                                  | Admin             | No  | `201` domain                                          |
-| `GET /{ws}/domains/{domainId}`                                                                       | Member            | Yes | `200` domain                                          |
-| `POST /{ws}/domains/{domainId}/verify`                                                               | Admin             | No  | `200` domain after a fresh check                      |
-| `DELETE /{ws}/domains/{domainId}`                                                                    | Admin             | No  | `204`, or `409` while links remain                    |
-| **Links**                                                                                            |                   |     |                                                       |
-| `GET /{ws}/links` `?search&status&domainId&limit&cursor`                                             | Member            | Yes | `200` list                                            |
-| `POST /{ws}/links` `{ destinationUrl, domainId?, code?, title?, expiresAt? }`                        | Member            | Yes | `201` link                                            |
-| `GET /{ws}/links/{linkId}`                                                                           | Member            | Yes | `200` link                                            |
-| `PATCH /{ws}/links/{linkId}` `{ destinationUrl?, title?, expiresAt?, status? }`                      | Member            | Yes | `200` link                                            |
-| `DELETE /{ws}/links/{linkId}`                                                                        | Member            | Yes | `204`                                                 |
-| `GET /{ws}/links/{linkId}/variants`                                                                  | Member            | Yes | `200` list, including archived                        |
-| `POST /{ws}/links/{linkId}/variants` `{ name, destinationUrl, weight }`                              | Member            | Yes | `201` variant                                         |
-| `PATCH /{ws}/links/{linkId}/variants/{variantId}` `{ name?, destinationUrl?, weight? }`              | Member            | Yes | `200` variant                                         |
-| `POST /{ws}/links/{linkId}/variants/{variantId}/archive`                                             | Member            | Yes | `200` variant                                         |
-| `POST /{ws}/links/{linkId}/variants/{variantId}/promote`                                             | Member            | Yes | `200` link                                            |
-| **QR codes**                                                                                         |                   |     |                                                       |
-| `GET /{ws}/links/{linkId}/qr` `?format&size&margin&foreground&background&errorCorrection`            | Member            | Yes | `200` image                                           |
-| `PUT /{ws}/links/{linkId}/qr-style` `{ foreground?, background?, margin?, errorCorrection? }`        | Member            | Yes | `200` style                                           |
-| **Analytics**                                                                                        |                   |     |                                                       |
-| `GET /{ws}/links/{linkId}/analytics` `?from&to&interval&top`                                         | Member            | Yes | `200` link analytics                                  |
-| `GET /{ws}/analytics` `?from&to`                                                                     | Member            | Yes | `200` totals, daily series, top links                 |
-| **Platform admin**                                                                                   |                   |     |                                                       |
-| `POST /admin/links/{linkId}/block`, `.../unblock`                                                    | Platform admin    | No  | `200`                                                 |
-| `POST /admin/domains/{domainId}/block`, `.../unblock`                                                | Platform admin    | No  | `200`                                                 |
-| `POST /admin/users/{userId}/disable`, `.../enable`                                                   | Platform admin    | No  | `200`                                                 |
+| Method and path                                                                                      | Role                                             | Key | Success                                               |
+| ---------------------------------------------------------------------------------------------------- | ------------------------------------------------ | --- | ----------------------------------------------------- |
+| **Account**                                                                                          |                                                  |     |                                                       |
+| `POST /auth/sign-up` `{ email, name, password }`                                                     | Public                                           |     | `202`                                                 |
+| `POST /auth/verify-email` `{ token }`                                                                | Public                                           |     | `204`                                                 |
+| `POST /auth/verify-email/resend` `{ email }`                                                         | Public                                           |     | `202`                                                 |
+| `POST /auth/sign-in` `{ email, password }`                                                           | Public                                           |     | `200` user, sets the session cookie                   |
+| `POST /auth/sign-out`                                                                                | Session                                          | No  | `204`                                                 |
+| `POST /auth/password-reset` `{ email }`                                                              | Public                                           |     | `202`                                                 |
+| `POST /auth/password-reset/confirm` `{ token, password }`                                            | Public                                           |     | `204`                                                 |
+| `GET /me`                                                                                            | Any                                              | Yes | `200` user or key identity, with workspaces and roles |
+| `PATCH /me` `{ name?, currentPassword?, newPassword? }`                                              | Session                                          | No  | `200`                                                 |
+| `GET /me/sessions`, `DELETE /me/sessions/{sessionId}`                                                | Session                                          | No  | `200`, `204`                                          |
+| **Workspaces**                                                                                       |                                                  |     |                                                       |
+| `POST /workspaces` `{ name }`                                                                        | Session                                          | No  | `201`                                                 |
+| `GET /{ws}`                                                                                          | Member                                           | Yes | `200`                                                 |
+| `PATCH /{ws}` `{ name }`, `DELETE /{ws}`                                                             | Owner                                            | No  | `200`, `204`                                          |
+| `GET /{ws}/members`                                                                                  | Member                                           | No  | `200`                                                 |
+| `PATCH /{ws}/members/{userId}` `{ role }`                                                            | Owner                                            | No  | `200`                                                 |
+| `DELETE /{ws}/members/{userId}`                                                                      | Admin for a member, owner for anyone, or oneself | No  | `204`                                                 |
+| `GET /{ws}/invitations`, `POST /{ws}/invitations` `{ email, role }`, `DELETE /{ws}/invitations/{id}` | Admin                                            | No  | `200`, `201`, `204`                                   |
+| `POST /invitations/accept` `{ token }`                                                               | Session                                          | No  | `200` workspace                                       |
+| `GET /{ws}/api-keys`, `POST /{ws}/api-keys` `{ name, expiresAt? }`, `DELETE /{ws}/api-keys/{id}`     | Admin                                            | No  | `200`, `201` with the key once, `204`                 |
+| `GET /{ws}/audit-log`                                                                                | Admin                                            | No  | `200` list                                            |
+| **Domains**                                                                                          |                                                  |     |                                                       |
+| `GET /{ws}/domains`                                                                                  | Member                                           | Yes | `200` list, including platform domains                |
+| `POST /{ws}/domains` `{ hostname }`                                                                  | Admin                                            | No  | `201` domain                                          |
+| `GET /{ws}/domains/{domainId}`                                                                       | Member                                           | Yes | `200` domain                                          |
+| `POST /{ws}/domains/{domainId}/verify`                                                               | Admin                                            | No  | `200` domain after a fresh check                      |
+| `DELETE /{ws}/domains/{domainId}`                                                                    | Admin                                            | No  | `204`, or `409` while links remain                    |
+| **Links**                                                                                            |                                                  |     |                                                       |
+| `GET /{ws}/links` `?search&status&domainId&limit&cursor`                                             | Member                                           | Yes | `200` list                                            |
+| `POST /{ws}/links` `{ destinationUrl, domainId?, code?, title?, expiresAt? }`                        | Member                                           | Yes | `201` link                                            |
+| `GET /{ws}/links/{linkId}`                                                                           | Member                                           | Yes | `200` link                                            |
+| `PATCH /{ws}/links/{linkId}` `{ destinationUrl?, title?, expiresAt?, status? }`                      | Member                                           | Yes | `200` link                                            |
+| `DELETE /{ws}/links/{linkId}`                                                                        | Member                                           | Yes | `204`                                                 |
+| `GET /{ws}/links/{linkId}/variants`                                                                  | Member                                           | Yes | `200` list, including archived                        |
+| `POST /{ws}/links/{linkId}/variants` `{ name, destinationUrl, weight }`                              | Member                                           | Yes | `201` variant                                         |
+| `PATCH /{ws}/links/{linkId}/variants/{variantId}` `{ name?, destinationUrl?, weight? }`              | Member                                           | Yes | `200` variant                                         |
+| `POST /{ws}/links/{linkId}/variants/{variantId}/archive`                                             | Member                                           | Yes | `200` variant                                         |
+| `POST /{ws}/links/{linkId}/variants/{variantId}/promote`                                             | Member                                           | Yes | `200` link                                            |
+| **QR codes**                                                                                         |                                                  |     |                                                       |
+| `GET /{ws}/links/{linkId}/qr` `?format&size&margin&foreground&background&errorCorrection`            | Member                                           | Yes | `200` image                                           |
+| `PUT /{ws}/links/{linkId}/qr-style` `{ foreground?, background?, margin?, errorCorrection? }`        | Member                                           | Yes | `200` style                                           |
+| **Analytics**                                                                                        |                                                  |     |                                                       |
+| `GET /{ws}/links/{linkId}/analytics` `?from&to&interval&top`                                         | Member                                           | Yes | `200` link analytics                                  |
+| `GET /{ws}/analytics` `?from&to`                                                                     | Member                                           | Yes | `200` totals, daily series, top links                 |
+| **Platform admin**                                                                                   |                                                  |     |                                                       |
+| `POST /admin/links/{linkId}/block`, `.../unblock`                                                    | Platform admin                                   | No  | `200`                                                 |
+| `POST /admin/domains/{domainId}/block`, `.../unblock`                                                | Platform admin                                   | No  | `200`                                                 |
+| `POST /admin/users/{userId}/disable`, `.../enable`                                                   | Platform admin                                   | No  | `200`                                                 |
 
 `domainId` defaults to the platform domain. When `code` is omitted one is generated. In a `PATCH`, at least one field is required, `expiresAt: null` removes the expiry, and `status` accepts `ACTIVE` or `DISABLED`.
 
@@ -792,7 +815,7 @@ A **variant**.
 | Endpoint                              | Where                 | Purpose                                         |
 | ------------------------------------- | --------------------- | ----------------------------------------------- |
 | `GET /{code}`                         | Every short domain    | The redirect: `302`, `404`, `410`, `429`, `503` |
-| `GET /health`, `GET /health/ready`    | Every host            | Liveness and readiness                          |
+| `GET /health`, `GET /health/ready`    | Internal network only | Liveness and readiness                          |
 | `GET /metrics`                        | Internal network only | Prometheus metrics                              |
 | `GET /internal/tls/authorize?domain=` | Internal network only | Whether the edge may obtain a certificate       |
 
@@ -810,37 +833,35 @@ PostgreSQL 18. Primary keys are UUIDv7 generated by the database (`uuidv7()`): t
 
 ### Workspaces
 
-| Table                   | Columns                                                                                                                                    | Constraints and notes                                                          |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------ |
-| `workspaces`            | `id`, `name VARCHAR(100)`, `slug VARCHAR(48)`                                                                                              | `UNIQUE (slug)`                                                                |
-| `workspace_members`     | `workspace_id`, `user_id`, `role`                                                                                                          | Primary key `(workspace_id, user_id)`; `role` is `owner`, `admin`, or `member` |
-| `workspace_invitations` | `id`, `workspace_id`, `email`, `role`, `token_hash BYTEA`, `invited_by_user_id`, `expires_at`, `accepted_at`                               | `UNIQUE (workspace_id, email)`, `UNIQUE (token_hash)`                          |
-| `api_keys`              | `id`, `workspace_id`, `name`, `key_prefix VARCHAR(16)`, `key_hash BYTEA`, `created_by_user_id`, `last_used_at`, `expires_at`, `revoked_at` | `UNIQUE (key_hash)`                                                            |
-| `audit_log`             | `id`, `workspace_id`, `actor_type`, `actor_id`, `action VARCHAR(64)`, `target_type`, `target_id`, `metadata JSONB`                         | `actor_type` is `user`, `api_key`, or `system`; append-only                    |
+| Table                   | Columns                                                                                                                                    | Constraints and notes                                                                                                  |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
+| `workspaces`            | `id`, `name VARCHAR(100)`, `slug VARCHAR(48)`                                                                                              | `UNIQUE (slug)`                                                                                                        |
+| `workspace_members`     | `workspace_id`, `user_id`, `role`                                                                                                          | Primary key `(workspace_id, user_id)`; `role` is `owner`, `admin`, or `member`                                         |
+| `workspace_invitations` | `id`, `workspace_id`, `email`, `role`, `token_hash BYTEA`, `invited_by_user_id`, `expires_at`                                              | `UNIQUE (workspace_id, email)`, `UNIQUE (token_hash)`; `role` is `admin` or `member`; the row is deleted on acceptance |
+| `api_keys`              | `id`, `workspace_id`, `name`, `key_prefix VARCHAR(16)`, `key_hash BYTEA`, `created_by_user_id`, `last_used_at`, `expires_at`, `revoked_at` | `UNIQUE (key_hash)`                                                                                                    |
+| `audit_log`             | `id`, `workspace_id`, `actor_type`, `actor_id`, `action VARCHAR(64)`, `target_type`, `target_id`, `metadata JSONB`                         | `actor_type` is `user`, `api_key`, or `system`; append-only                                                            |
 
 ### Domains and links
 
-| Table           | Columns                                                                                                                                                                                               | Constraints and notes                                                                                                                                                                     |
-| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `domains`       | `id`, `workspace_id` (null for a platform domain), `hostname VARCHAR(253) COLLATE "C"`, `status`, `verification_token`, `verified_at`, `last_checked_at`                                              | `UNIQUE (hostname)`; hostname stored lowercase; `status` is `PENDING`, `ACTIVE`, `INACTIVE`, or `BLOCKED`                                                                                 |
-| `links`         | `id`, `workspace_id`, `domain_id`, `code VARCHAR(32) COLLATE "C"`, `destination_url TEXT`, `title VARCHAR(200)`, `status`, `expires_at`, `qr_style JSONB`, `click_count BIGINT`, `created_by_user_id` | `UNIQUE (domain_id, code)`, the final guard on codes; destination at most 2,048 characters; `status` is `ACTIVE`, `DISABLED`, or `BLOCKED`; a domain cannot be deleted while it has links |
-| `link_variants` | `id`, `link_id`, `name VARCHAR(50)`, `destination_url TEXT`, `weight SMALLINT`, `archived_at`                                                                                                         | `weight` between 1 and 99; cascades with the link                                                                                                                                         |
+| Table           | Columns                                                                                                                                                                                                             | Constraints and notes                                                                                                                                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `domains`       | `id`, `workspace_id` (null for a platform domain), `hostname VARCHAR(253) COLLATE "C"`, `status`, `verification_token`, `ownership_verified`, `routing_verified`, `failed_checks`, `verified_at`, `last_checked_at` | `UNIQUE (workspace_id, hostname)`; a unique index on `hostname` among `ACTIVE` and `BLOCKED` rows, so at most one row serves a host; hostname stored lowercase; `status` is `PENDING`, `ACTIVE`, `INACTIVE`, or `BLOCKED` |
+| `links`         | `id`, `workspace_id`, `domain_id`, `code VARCHAR(32) COLLATE "C"`, `destination_url TEXT`, `title VARCHAR(200)`, `status`, `expires_at`, `qr_style JSONB`, `click_count BIGINT`, `created_by_user_id`               | `UNIQUE (domain_id, code)`, the final guard on codes; destination at most 2,048 characters; `status` is `ACTIVE`, `DISABLED`, or `BLOCKED`; a domain cannot be deleted while it has links                                 |
+| `link_variants` | `id`, `link_id`, `name VARCHAR(50)`, `destination_url TEXT`, `weight SMALLINT`, `archived_at`                                                                                                                       | `weight` between 1 and 99; cascades with the link                                                                                                                                                                         |
 
-`links.updated_at` changes only when someone edits the link. The click roll-up increments `click_count` without touching it.
+`links.updated_at` changes only when someone edits the link. The click roll-up increments `click_count` with a raw SQL statement that leaves it alone, because the ORM's update helpers would set it. Visitor hashes and their salts are not in this database at all (section 10).
 
 ### Analytics
 
-| Table                   | Columns                                                                                                                                                                   | Constraints and notes                                                                                                                                           |
-| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `click_events`          | `event_id UUID`, `clicked_at`, `link_id`, `variant_id`, `source`, `country CHAR(2)`, `device_type`, `os VARCHAR(32)`, `browser VARCHAR(32)`, `referrer_host VARCHAR(255)` | Partitioned by month on `clicked_at`; primary key `(event_id, clicked_at)`; index `(link_id, clicked_at)`; no foreign key, because rows leave by partition drop |
-| `link_daily_totals`     | `link_id`, `day DATE`, `clicks`, `unique_visitors`                                                                                                                        | Primary key `(link_id, day)`; cascades with the link                                                                                                            |
-| `link_daily_breakdowns` | `link_id`, `day`, `dimension`, `value VARCHAR(255)`, `clicks`                                                                                                             | Primary key `(link_id, day, dimension, value)`; `dimension` is `country`, `device`, `os`, `browser`, `referrer`, `source`, or `variant`                         |
-| `link_daily_visitors`   | `link_id`, `day`, `visitor_hash BYTEA`                                                                                                                                    | Primary key on all three; rows deleted after 48 hours                                                                                                           |
-| `visitor_salts`         | `day DATE`, `salt BYTEA`                                                                                                                                                  | One row per UTC day; deleted after 48 hours                                                                                                                     |
+| Table                   | Columns                                                                                                                                                                   | Constraints and notes                                                                                                                                         |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `click_events`          | `event_id UUID`, `clicked_at`, `link_id`, `variant_id`, `source`, `country CHAR(2)`, `device_type`, `os VARCHAR(32)`, `browser VARCHAR(32)`, `referrer_host VARCHAR(255)` | Partitioned by day on `clicked_at`; primary key `(event_id, clicked_at)`; index `(link_id, clicked_at)`; no foreign key, because rows leave by partition drop |
+| `link_daily_totals`     | `link_id`, `day DATE`, `clicks`, `unique_visitors`                                                                                                                        | Primary key `(link_id, day)`; cascades with the link                                                                                                          |
+| `link_daily_breakdowns` | `link_id`, `day`, `dimension`, `value VARCHAR(255)`, `clicks`                                                                                                             | Primary key `(link_id, day, dimension, value)`; `dimension` is `country`, `device`, `os`, `browser`, `referrer`, `source`, or `variant`                       |
 
 Two deliberate differences from the diagram's single `URL_Mappings` table: the short code is unique per domain rather than a global primary key, because each custom domain is its own namespace, and `EXPIRED` is derived rather than stored (section 7).
 
-Schema changes ship as new migration files and run as an explicit step before a release starts, never implicitly at boot.
+Schema changes ship as new migration files and run as an explicit step before a release starts, never implicitly at boot. The first migration is the schema of the single-tenant MVP that preceded this document; the second replaces it with the tables above.
 
 ## 16. Configuration and technology
 
@@ -883,6 +904,7 @@ Validated at start-up; the process refuses to boot on an invalid configuration. 
 | Tests              | Vitest for unit and API end-to-end tests, Playwright for the dashboard | NestJS 12 is ESM-only and scaffolds Vitest; Jest's ESM support is still experimental.                                                                                                 |
 | Lint and format    | ESLint (type-aware) and Prettier                                       | File and function length limits are lint rules.                                                                                                                                       |
 | Analytics store    | Postgres, partitioned events plus roll-ups                             | One database to run and back up, with a stated ceiling (section 10, decision 7).                                                                                                      |
+| Background jobs    | An in-process scheduler with one Postgres advisory lock per job        | No extra infrastructure, and safe with any number of workers.                                                                                                                         |
 
 ## 17. Work split
 
@@ -890,27 +912,32 @@ Phase 1 delivers this document and the foundation. Phase 2 is two waves of works
 
 ### Wave 1: eight workstreams in parallel
 
-| #   | Workstream         | Owns                                                                                                                                                                        | Delivers                                                                                                                                                                        | Requirements             |
-| --- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
-| 1   | Identity           | `apps/api/src/identity`, `apps/api/src/workspaces`, `apps/api/src/audit`, `packages/contracts/src/identity.ts`, `packages/contracts/src/workspaces.ts`                      | Sign-up, verification, sessions, password reset, mail sending, the real `Authenticator`, workspaces, members, invitations, API keys, quotas, the real `AuditLog`                | ID-1 to ID-9             |
-| 2   | Links              | `apps/api/src/links`, `packages/contracts/src/links.ts`                                                                                                                     | Link and variant management, code generation, destination validation and risk check, the daily blocklist re-check                                                               | LK-1 to LK-9, AB-1, AB-5 |
-| 3   | Redirect           | `apps/api/src/redirect`, `apps/api/src/link-cache`                                                                                                                          | `GET /{code}` by host, the cache with tombstones and single-flight, state rules, degraded modes, HTML error pages, the real `LinkCacheInvalidator`                              | RD-1 to RD-11            |
-| 4   | Domains            | `apps/api/src/domains`, `deploy/Caddyfile*`, `packages/contracts/src/domains.ts`                                                                                            | Domain management, DNS verification and its schedule, seeding the platform domain, the certificate authorisation endpoint, the production edge configuration with on-demand TLS | DM-1 to DM-7             |
-| 5   | Analytics          | `apps/api/src/analytics`, `packages/contracts/src/analytics.ts`                                                                                                             | The real `ClickRecorder`, GeoIP and user-agent enrichment, visitor hashing and salt rotation, the consumer and roll-ups, partition and retention jobs, the query endpoints      | AN-1 to AN-7, AB-4       |
-| 6   | QR and experiments | `apps/api/src/qr`, `apps/api/src/experiments`, `packages/contracts/src/qr.ts`                                                                                               | QR rendering, styling, and saved styles; the real `DestinationSelector`                                                                                                         | QR-1 to QR-4, AB-2, AB-3 |
-| 7   | Platform           | `apps/api/src/common/rate-limit`, `apps/api/src/common/metrics`, `apps/api/src/common/logging`, `apps/api/src/admin`, `deploy/` except the Caddyfiles, `docs/operations.md` | Rate limiting, the real `Metrics` and `GET /metrics`, request logging, platform admin endpoints, the production Compose file, backup and restore scripts and runbook            | PL-1, PL-4, PL-5         |
-| 8   | Dashboard shell    | `apps/web/src/app`, `apps/web/src/ui`, `apps/web/src/api`, `apps/web/src/features/auth`, `apps/web/e2e`                                                                     | Routing, layout, workspace switcher, the typed API client, the component kit, the sign-up, sign-in, verify, and reset screens, the Playwright harness                           | DB-1, DB-6               |
+| #   | Workstream         | Owns                                                                                                                                                                        | Delivers                                                                                                                                                                                                    | Requirements             |
+| --- | ------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| 1   | Identity           | `apps/api/src/identity`, `apps/api/src/workspaces`, `apps/api/src/audit`, `packages/contracts/src/identity.ts`, `packages/contracts/src/workspaces.ts`                      | Sign-up, verification, sessions, password reset, lockout, mail sending and its throttle, the real `Authenticator`, workspaces, members, invitations, API keys, quotas, the real `AuditLog` and its endpoint | ID-1 to ID-9             |
+| 2   | Links              | `apps/api/src/links`, `packages/contracts/src/links.ts`                                                                                                                     | Link and variant management, code generation, destination validation and risk check, the daily blocklist re-check                                                                                           | LK-1 to LK-9, AB-1, AB-5 |
+| 3   | Redirect           | `apps/api/src/redirect`, `apps/api/src/link-cache`                                                                                                                          | `GET /{code}` by host, the cache with tombstones and single-flight, state rules, degraded modes, HTML error pages, the real `LinkCacheInvalidator`                                                          | RD-1 to RD-11            |
+| 4   | Domains            | `apps/api/src/domains`, `deploy/Caddyfile*`, `packages/contracts/src/domains.ts`                                                                                            | Domain claims, DNS verification and its schedule, seeding the platform domain, the certificate authorisation endpoint, the production edge configuration with on-demand TLS                                 | DM-1 to DM-7             |
+| 5   | Analytics          | `apps/api/src/analytics`, `packages/contracts/src/analytics.ts`                                                                                                             | The real `ClickRecorder` with GeoIP and user-agent reduction, the daily salt and visitor sketches, the consumer and roll-ups, partition and retention jobs, the query endpoints                             | AN-1 to AN-7, AB-4       |
+| 6   | QR and experiments | `apps/api/src/qr`, `apps/api/src/experiments`, `packages/contracts/src/qr.ts`                                                                                               | QR rendering, styling, and saved styles; the real `DestinationSelector`                                                                                                                                     | QR-1 to QR-4, AB-2, AB-3 |
+| 7   | Platform           | `apps/api/src/common/rate-limit`, `apps/api/src/common/metrics`, `apps/api/src/common/logging`, `apps/api/src/admin`, `deploy/` except the Caddyfiles, `docs/operations.md` | Rate limiting, the real `Metrics` and `GET /metrics`, request logging, platform admin endpoints, the production Compose file, backup and restore scripts and runbook                                        | PL-1, PL-4, PL-5         |
+| 8   | Dashboard shell    | `apps/web/src/app`, `apps/web/src/ui`, `apps/web/src/api`, `apps/web/e2e`                                                                                                   | Routing, layout, workspace switcher, the session-aware API client, the component kit, the link detail frame, the two registries below, the Playwright harness                                               | DB-6                     |
 
-### Wave 2: four workstreams in parallel, after wave 1 merges
+Workstream 8 needs no API contract from the others: its client reads the error body from `packages/contracts` and treats `401` as signed out. It delivers two registries so that wave 2 never edits a shared file. Routes are discovered from `apps/web/src/features/*/routes.tsx`, and tabs of the link detail frame from `apps/web/src/features/*/link-tabs.tsx`; a feature appears by adding its own file.
 
-| #   | Workstream                      | Owns                                                                                                | Delivers                                                                                                                               | Requirements |
-| --- | ------------------------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
-| 9   | Dashboard: links                | `apps/web/src/features/links`, `apps/web/src/features/qr`, `apps/web/src/features/experiments`      | Link list, create and edit, link detail frame, QR tab, A/B tab                                                                         | DB-3, DB-4   |
-| 10  | Dashboard: analytics            | `apps/web/src/features/analytics`                                                                   | Link analytics and the workspace overview                                                                                              | DB-4         |
-| 11  | Dashboard: domains and settings | `apps/web/src/features/domains`, `apps/web/src/features/workspace`, `apps/web/src/features/account` | Domains, members, invitations, API keys, audit log, account and sessions                                                               | DB-2, DB-5   |
-| 12  | Hardening                       | `apps/web/e2e`, `load/`, `docs/operations.md`                                                       | Playwright golden paths over the whole stack, a load test against the objectives in section 13, a restore rehearsal, a security review | Section 19   |
+### Wave 2: five workstreams in parallel, after wave 1 merges
 
-The foundation owns everything else: `apps/api/src/main.ts`, `app.module.ts`, `app.setup.ts`, `config`, `database`, `redis`, `health`, `http`, `common/errors`, `common/link`, `apps/api/test/support`, `packages/contracts/src/errors.ts`, the Dockerfile, `docker-compose.yml`, and CI. PL-2, PL-3, and PL-6 are already delivered there.
+| #   | Workstream                       | Owns                                                                                             | Delivers                                                                                                                               | Requirements |
+| --- | -------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------- | ------------ |
+| 9   | Dashboard: links                 | `apps/web/src/features/links`, `apps/web/src/features/qr`, `apps/web/src/features/experiments`   | Link list, create and edit, and the QR and A/B tabs of the link detail frame                                                           | DB-3, DB-4   |
+| 10  | Dashboard: analytics             | `apps/web/src/features/analytics`                                                                | The analytics tab of the link detail frame and the workspace overview                                                                  | DB-4         |
+| 11  | Dashboard: domains               | `apps/web/src/features/domains`                                                                  | Add a domain, DNS instructions, status, re-check, remove                                                                               | DB-5         |
+| 12  | Dashboard: account and workspace | `apps/web/src/features/auth`, `apps/web/src/features/account`, `apps/web/src/features/workspace` | Sign up, verify, sign in, reset; profile, password, sessions; members, invitations, API keys, audit log                                | DB-1, DB-2   |
+| 13  | Hardening                        | `apps/web/e2e`, `load/`, `docs/operations.md`                                                    | Playwright golden paths over the whole stack, a load test against the objectives in section 13, a restore rehearsal, a security review | Section 19   |
+
+Wave 2 builds on the Zod schemas wave 1 wrote in `packages/contracts`, which is why the dashboard features follow the API rather than run beside it.
+
+The foundation owns everything else: `apps/api/src/main.ts`, `app.module.ts`, `app.setup.ts`, `config`, `database`, `redis`, `health`, `http`, `common/errors`, `common/link`, `common/jobs`, `apps/api/test/support`, `packages/contracts/src/errors.ts`, the Dockerfile, `docker-compose.yml`, and CI. PL-2, PL-3, and PL-6 are already delivered there.
 
 ### Dependency direction
 
@@ -929,6 +956,7 @@ flowchart TD
   links --> linkcache
   domains --> linkcache
   admin --> linkcache
+  workspaces --> linkcache
   workspaces --> shared
   links --> shared
   domains --> shared
@@ -971,7 +999,7 @@ requireWorkspaceRole(principal, workspaceId, WorkspaceRole.Member); // 404 or 40
 
 The placeholder recognises nobody. Tests sign in with `authenticatedAs()` from `apps/api/test/support`, so no workstream waits for real sessions.
 
-**Cache invalidation: implemented by 3, used by 2, 4, and 7**
+**Cache invalidation: implemented by 3, used by 1, 2, 4, and 7**
 
 ```ts
 // apps/api/src/link-cache/link-cache-invalidator.ts
@@ -1050,10 +1078,33 @@ export abstract class Metrics {
     name: CounterName,
     labels?: Record<string, string>,
   ): void;
+  abstract setGauge(name: GaugeName, value: number): void;
 }
 ```
 
-`CounterName` is the closed set of counters other workstreams emit. HTTP duration, rate-limit, and click-stream metrics are recorded inside workstreams 7 and 5 and need no shared contract.
+`CounterName` and `GaugeName` are the closed sets other workstreams emit, including `click_events_total` and `click_stream_lag` for workstream 5. HTTP duration and rate-limit metrics are recorded inside workstream 7 and need no shared contract.
+
+**Background jobs: provided by the foundation, used by 2, 4, and 5**
+
+```ts
+// apps/api/src/common/jobs/job-scheduler.ts
+export interface ScheduledJob {
+  name: string; // also the name of the job's lock
+  everyMs: number;
+  run: () => Promise<void>; // must be safe to repeat
+}
+
+export class JobScheduler {
+  /** From onApplicationBootstrap. Runs now and then every `everyMs`. */
+  register(job: ScheduledJob): void;
+  /** Runs the job now unless a run of it is in progress anywhere. */
+  runExclusively(job: ScheduledJob): Promise<boolean>;
+}
+
+export function runsBackgroundWork(role: 'all' | 'web' | 'worker'): boolean;
+```
+
+`JobScheduler` is finished, not a placeholder. A registered job runs only in processes with the worker role and in only one of them at a time, because each run holds a Postgres advisory lock named after the job. A job must be safe to repeat. Long-running loops that are not periodic, such as the click consumer, start themselves when `runsBackgroundWork()` is true.
 
 **Shared by everyone, owned by the foundation**
 
@@ -1065,6 +1116,7 @@ export abstract class Metrics {
 | `getRequestId(request)`                                                                                                                                                                                  | `apps/api/src/http/request-id.middleware.ts`                     |
 | Code shape and reserved words                                                                                                                                                                            | `apps/api/src/common/link/short-code.ts`                         |
 | `resolveLinkState()`                                                                                                                                                                                     | `apps/api/src/common/link/link-state.ts`                         |
+| `JobScheduler` and `runsBackgroundWork()`                                                                                                                                                                | `apps/api/src/common/jobs/job-scheduler.ts`                      |
 | `REDIS_CLIENT` and the `RedisClient` type                                                                                                                                                                | `apps/api/src/redis/redis-client.ts`                             |
 | Validated configuration, including every variable in section 16                                                                                                                                          | `apps/api/src/config/env.schema.ts`                              |
 
@@ -1078,6 +1130,8 @@ export abstract class Metrics {
 4. Each workstream adds its own end-to-end spec files and reuses `apps/api/test/support`: `createTestApp()` boots the whole application and takes provider overrides, `authenticatedAs()` signs requests in, `createWorkspaceFixture()` inserts a user, a workspace, and the platform domain, and `resetState()` empties Postgres and Redis between tests.
 5. Until a real implementation merges, each placeholder is safe to build against, so every workstream's tests pass on their own.
 6. Never log a full destination URL, and never log an IP address on the redirect path.
+7. Adding a dependency changes `package.json` and `pnpm-lock.yaml`, which several workstreams will do at once. That conflict is expected: keep both sets of entries in `package.json` and regenerate the lockfile with `pnpm install`.
+8. The end-to-end environment runs with the web role, so no background job starts by itself in a test. A test runs a job by calling it.
 
 ## 18. Decisions for the captain
 
@@ -1103,76 +1157,82 @@ The platform is done when each of these passes as an automated test against real
 
 ### Identity and workspaces
 
-| Id   | Criterion                                                                                                                                                                                         | Covers     |
-| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
-| AC-1 | Sign-up answers `202` for a new and for an existing email; the new account cannot sign in until it follows the mailed link; afterwards sign-in sets an `HttpOnly`, `SameSite=Lax` session cookie. | ID-1, ID-2 |
-| AC-2 | A wrong password and an unknown email return the same `401`; the sixth attempt within 15 minutes is refused even with the right password.                                                         | ID-2       |
-| AC-3 | A password reset revokes every session; a reset token works once and not after an hour.                                                                                                           | ID-3, ID-4 |
-| AC-4 | A cookie-authenticated `POST` without a matching `Origin` is `403`; the same request with an API key succeeds.                                                                                    | ID-2       |
-| AC-5 | A member cannot add a domain or create an API key (`403`); a user outside the workspace gets `404` on every one of its routes.                                                                    | ID-5, ID-8 |
-| AC-6 | An invitation is accepted only by the invited email; the last owner cannot be removed or demoted.                                                                                                 | ID-5, ID-6 |
-| AC-7 | An API key is returned once, works as a member of its workspace only, and stops working when revoked or expired.                                                                                  | ID-7       |
-| AC-8 | Creating a link, verifying a domain, and revoking a key each add an audit entry naming the actor.                                                                                                 | ID-9       |
+| Id    | Criterion                                                                                                                                                                                                                                                                    | Covers     |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| AC-1  | Sign-up answers `202` for a new, an unverified, and a verified email; a new account cannot sign in until it follows the mailed link; signing up again for an unverified address replaces its password; afterwards sign-in sets an `HttpOnly`, `SameSite=Lax` session cookie. | ID-1, ID-2 |
+| AC-2  | A wrong password, an unknown email, and a locked account all return the same `401`; the sixth attempt from one address within 15 minutes is refused even with the right password, while another address can still sign in.                                                   | ID-2       |
+| AC-3  | A password reset revokes every session; a reset token works once and not after an hour.                                                                                                                                                                                      | ID-3, ID-4 |
+| AC-4  | A cookie-authenticated `POST` without a matching `Origin` is `403`; the same request with an API key succeeds.                                                                                                                                                               | ID-2       |
+| AC-5  | A member cannot add a domain or create an API key (`403`); a user outside the workspace gets `404` on every one of its routes.                                                                                                                                               | ID-5, ID-8 |
+| AC-6  | An invitation is accepted only by the invited email and can be sent again after the member leaves; an admin cannot remove an owner; the last owner cannot be removed or demoted.                                                                                             | ID-5, ID-6 |
+| AC-7  | An API key is returned once, works as a member of its workspace only, and stops working when revoked or expired.                                                                                                                                                             | ID-7       |
+| AC-8  | Creating a link, verifying a domain, and revoking a key each add an audit entry naming the actor.                                                                                                                                                                            | ID-9       |
+| AC-49 | A session stops working after 14 days without use and 90 days after sign-in, and immediately when revoked.                                                                                                                                                                   | ID-2, ID-4 |
+| AC-50 | The eleventh custom domain, the twenty-first API key, and the fifth variant are refused with `422 QUOTA_EXCEEDED`.                                                                                                                                                           | ID-5       |
+| AC-51 | Deleting a workspace makes its links answer `404` on the next request, including links that were cached.                                                                                                                                                                     | ID-5, LK-9 |
 
 ### Links and redirects
 
-| Id    | Criterion                                                                                                                                                             | Covers             |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------ |
-| AC-9  | Creating a link returns `201` with a 7 character Base62 code; `GET /{code}` on its domain returns `302` to the normalised destination with `Cache-Control: no-store`. | LK-1 to LK-3, RD-1 |
-| AC-10 | Invalid input returns `400`: missing destination, `ftp://`, over 2,048 characters, unknown property, malformed code. A reserved code is `422`, a taken one `409`.     | LK-2 to LK-4       |
-| AC-11 | When generated codes collide, creation retries and succeeds; after 5 collisions it returns `503`.                                                                     | LK-4               |
-| AC-12 | The same code can exist on two domains and each redirects to its own destination; the code on a third, unknown host is `404`.                                         | RD-3, DM-4         |
-| AC-13 | A blocklisted host, the app host, a connected short domain, and `http://127.0.0.1/` are each refused with `422`.                                                      | LK-5               |
-| AC-14 | The second redirect of a link runs no Postgres query; an unknown code queried twice within 60 s reaches Postgres once.                                                | RD-5 to RD-7       |
-| AC-15 | A link whose expiry passes answers `410`, including when it was cached while active.                                                                                  | RD-4               |
-| AC-16 | After disabling, the very next redirect is `410`; after enabling, `302`; after a destination change, the new destination; after deletion, `404`.                      | LK-6, LK-7, LK-9   |
-| AC-17 | A reader that loaded the old row before an update cannot repopulate the cache with it after the update.                                                               | LK-9               |
-| AC-18 | With Redis stopped, existing links still redirect. With Postgres stopped, a cached link redirects and an uncached code is `503`.                                      | RD-8               |
-| AC-19 | A browser gets an HTML page for `404` and `410`; a client asking for JSON gets the error body.                                                                        | RD-11              |
+| Id    | Criterion                                                                                                                                                                                            | Covers                   |
+| ----- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------ |
+| AC-9  | Creating a link returns `201` with a 7 character Base62 code; `GET /{code}` on its domain returns `302`, never `301`, to the normalised destination with `Cache-Control: no-store`.                  | LK-1 to LK-3, RD-1, RD-2 |
+| AC-10 | Invalid input returns `400`: missing destination, `ftp://`, over 2,048 characters, unknown property, malformed code. A reserved code is `422`, a taken one `409`.                                    | LK-2 to LK-4             |
+| AC-11 | When generated codes collide, creation retries and succeeds; after 5 collisions it returns `503`.                                                                                                    | LK-4                     |
+| AC-12 | Two workspaces can both create links on the platform domain. The same code can exist on two domains and each redirects to its own destination; the code on a third, unknown host is `404`.           | RD-3, DM-4, DM-6         |
+| AC-13 | A blocklisted host, the app host, a connected short domain, and `http://127.0.0.1/` are each refused with `422`.                                                                                     | LK-5                     |
+| AC-14 | The second redirect of a link runs no Postgres query; an unknown code queried twice within 60 s reaches Postgres once.                                                                               | RD-5 to RD-7             |
+| AC-15 | A link whose expiry passes answers `410`, including when it was cached while active.                                                                                                                 | RD-4                     |
+| AC-16 | After disabling, the very next redirect is `410`; after enabling, `302`; after a destination change, the new destination; after deletion, `404`.                                                     | LK-6, LK-7, LK-9         |
+| AC-17 | A reader that loaded the old row before an update cannot repopulate the cache with it after the update.                                                                                              | LK-9                     |
+| AC-18 | With Redis stopped, existing links still redirect and no error reaches the visitor although clicks cannot be recorded. With Postgres stopped, a cached link redirects and an uncached code is `503`. | RD-8, RD-10              |
+| AC-19 | A browser gets an HTML page for `404` and `410`; a client asking for JSON gets the error body.                                                                                                       | RD-11                    |
+| AC-52 | The link list returns matches for a search over code, title, and destination, filters by status and domain, and pages through 60 links with a cursor without repeating or skipping one.              | LK-8                     |
 
 ### Custom domains
 
-| Id    | Criterion                                                                                                                                                       | Covers     |
-| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
-| AC-20 | A new domain is `PENDING` and lists its TXT and CNAME records; links cannot be created on it (`422`).                                                           | DM-1, DM-2 |
-| AC-21 | With both records present it becomes `ACTIVE` and redirects; with only the CNAME, or only the TXT, it stays `PENDING`.                                          | DM-2       |
-| AC-22 | An active domain that fails three daily checks becomes `INACTIVE` and its links answer `404` within seconds.                                                    | DM-3       |
-| AC-23 | A host name already connected, an IP address, and a platform host are refused.                                                                                  | DM-1       |
-| AC-24 | The certificate endpoint answers `200` for an active domain and `404` for pending, inactive, blocked, and unknown hosts, and is not reachable through the edge. | DM-5       |
-| AC-25 | A domain with links cannot be removed (`409`); without links it can.                                                                                            | DM-7       |
+| Id    | Criterion                                                                                                                                                                                                                            | Covers     |
+| ----- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------- |
+| AC-20 | A new domain is `PENDING` and lists its TXT and CNAME records; links cannot be created on it (`422`).                                                                                                                                | DM-1, DM-2 |
+| AC-21 | With both records present it becomes `ACTIVE` and redirects; with only the CNAME, or only the TXT, it stays `PENDING`.                                                                                                               | DM-2       |
+| AC-22 | An active domain that fails three daily checks becomes `INACTIVE` and its links answer `404` within seconds.                                                                                                                         | DM-3       |
+| AC-23 | An IP address, a platform host, and a blocked host are refused. Two workspaces can claim the same host; the one whose TXT record is published becomes active, the other stays pending, and neither response reveals the other claim. | DM-1, DM-2 |
+| AC-24 | The certificate endpoint answers `200` for an active domain and `404` for pending, inactive, blocked, and unknown hosts, and is not reachable through the edge.                                                                      | DM-5       |
+| AC-25 | A domain with links cannot be removed (`409`); without links it can.                                                                                                                                                                 | DM-7       |
 
 ### QR codes, analytics, and A/B tests
 
-| Id    | Criterion                                                                                                                                          | Covers           |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| AC-26 | The QR endpoint returns a valid SVG and a valid PNG that decode to the short URL with the scan marker.                                             | QR-1, QR-3       |
-| AC-27 | Saved styling is applied, query parameters override it, and a low-contrast colour pair is `400`.                                                   | QR-2, QR-4       |
-| AC-28 | N redirects produce a total of N within 30 s; replaying the same events changes nothing.                                                           | AN-1, AN-4       |
-| AC-29 | Clicks with known IPs and user agents appear under the right country, device, operating system, and browser; a click with `r=qr` counts as a scan. | AN-1, AN-2, QR-3 |
-| AC-30 | Two clicks from one visitor on one day count as one unique visitor; the same visitor the next day counts again.                                    | AN-3             |
-| AC-31 | No table, stream entry, or log line contains an IP address after a click.                                                                          | AN-3             |
-| AC-32 | A bot user agent is redirected and changes no total.                                                                                               | AN-7             |
-| AC-33 | Events older than the retention window are gone after the retention job; roll-ups remain.                                                          | AN-6             |
-| AC-34 | Over 10,000 distinct visitors, a 30% variant receives between 28% and 32% of redirects.                                                            | AB-1, AB-2       |
-| AC-35 | One visitor always reaches the same destination across 100 requests and across a restart.                                                          | AB-2             |
-| AC-36 | With variants that sum past 99, or malformed in the cache, every redirect goes to the control.                                                     | AB-3             |
-| AC-37 | Clicks are reported per variant and for the control; promoting a variant makes its destination the link's and archives the test.                   | AB-4, AB-5       |
+| Id    | Criterion                                                                                                                                                                                                                           | Covers            |
+| ----- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| AC-26 | The QR endpoint returns a valid SVG and a valid PNG that decode to the short URL with the scan marker.                                                                                                                              | QR-1, QR-3        |
+| AC-27 | Saved styling is applied, query parameters override it, and a low-contrast colour pair is `400`.                                                                                                                                    | QR-2, QR-4        |
+| AC-28 | N redirects produce a total of N within 30 s; replaying the same events changes nothing.                                                                                                                                            | AN-1, AN-4, RD-10 |
+| AC-29 | Clicks with known IPs and user agents appear under the right country, device, operating system, and browser; a click with `r=qr` counts as a scan.                                                                                  | AN-1, AN-2, QR-3  |
+| AC-30 | Two clicks from one visitor on one day count as one unique visitor, and the same visitor the next day counts again; 1,000 distinct visitors in a day are counted to within 2%.                                                      | AN-3              |
+| AC-31 | After a click, no table, stream entry, or log line contains the visitor's IP address, raw user agent, full referrer, or visitor hash, and the salt exists only in Redis with an expiry.                                             | AN-3              |
+| AC-32 | A bot user agent is redirected and changes no total.                                                                                                                                                                                | AN-7              |
+| AC-33 | Events older than the retention window are gone after the retention job; roll-ups remain.                                                                                                                                           | AN-6              |
+| AC-34 | Over 10,000 distinct visitors, a 30% variant receives between 28% and 32% of redirects.                                                                                                                                             | AB-1, AB-2, RD-9  |
+| AC-35 | One visitor always reaches the same destination across 100 requests and across a restart.                                                                                                                                           | AB-2              |
+| AC-36 | With variants that sum past 99, or malformed in the cache, every redirect goes to the control.                                                                                                                                      | AB-3              |
+| AC-37 | Clicks are reported per variant and for the control; promoting a variant makes its destination the link's and archives the test.                                                                                                    | AB-4, AB-5        |
+| AC-53 | Link analytics return totals, a daily series, and for each dimension the top values plus `other`; an hourly series is returned for a 7 day range and refused for a longer one; the workspace overview returns totals and top links. | AN-5              |
 
 ### Dashboard and platform
 
-| Id    | Criterion                                                                                                                              | Covers           |
-| ----- | -------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
-| AC-38 | (Playwright) Sign up, verify, create a link, follow it, and see the click on the link's analytics.                                     | DB-1, DB-3, DB-4 |
-| AC-39 | (Playwright) Add a domain, see its DNS records, and see it turn active. Download a QR code. Start an A/B test and promote a variant.   | DB-4, DB-5       |
-| AC-40 | (Playwright) Every primary view passes an automated accessibility check and works at 360 px wide.                                      | DB-6             |
-| AC-41 | Exceeding a rate limit returns `429` with `Retry-After`, and requests succeed again after the window (tested with a shortened window). | PL-1             |
-| AC-42 | Every response carries `X-Request-Id`, including one rejected before it reaches a route.                                               | PL-2             |
-| AC-43 | A blocked link answers `410` on the next request and its workspace cannot re-enable it.                                                | PL-4             |
-| AC-44 | `GET /health/ready` is `ok`, `degraded`, or `503` as section 13 describes; `/metrics` exposes every metric listed there.               | PL-5             |
-| AC-45 | Unknown routes, malformed JSON, and oversized bodies all answer in the documented error body.                                          | PL-3, PL-6       |
-| AC-46 | (Manual) `docker compose up` from a clean checkout brings up the whole stack, healthy.                                                 | Goal 9           |
-| AC-47 | (Manual, before launch) A load test meets the redirect objectives, and a restore from backup is rehearsed.                             | Section 13       |
-| AC-48 | CI runs format, lint, type checks, build, unit tests, end-to-end tests, and a Compose smoke test on every pull request.                | Goal 9           |
+| Id    | Criterion                                                                                                                                                                   | Covers           |
+| ----- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------- |
+| AC-38 | (Playwright) Sign up, verify, create a link, follow it, and see the click on the link's analytics.                                                                          | DB-1, DB-3, DB-4 |
+| AC-39 | (Playwright) Add a domain, see its DNS records, and see it turn active. Download a QR code. Start an A/B test and promote a variant. Invite a member and create an API key. | DB-2, DB-4, DB-5 |
+| AC-40 | (Playwright) Every primary view passes an automated accessibility check and works at 360 px wide.                                                                           | DB-6             |
+| AC-41 | Exceeding a rate limit returns `429` with `Retry-After`, and requests succeed again after the window (tested with a shortened window).                                      | PL-1             |
+| AC-42 | Every response carries `X-Request-Id`, including one rejected before it reaches a route.                                                                                    | PL-2             |
+| AC-43 | A blocked link answers `410` on the next request and its workspace cannot re-enable it. A disabled account is signed out and cannot sign in.                                | PL-4             |
+| AC-44 | `GET /health/ready` is `ok`, `degraded`, or `503` as section 13 describes; `/metrics` exposes every metric listed there; neither is reachable through the edge.             | PL-5             |
+| AC-45 | Unknown routes, malformed JSON, and oversized bodies all answer in the documented error body.                                                                               | PL-3, PL-6       |
+| AC-54 | A scheduled job registered on two workers runs on one of them at a time, and not at all in a process with the web role.                                                     | Section 13       |
+| AC-46 | (Manual) `docker compose up` from a clean checkout brings up the whole stack, healthy.                                                                                      | Goal 9           |
+| AC-47 | (Manual, before launch) A load test meets the redirect objectives, and a restore from backup is rehearsed.                                                                  | Section 13       |
+| AC-48 | CI runs format, lint, type checks, build, unit tests, end-to-end tests, and a Compose smoke test on every pull request.                                                     | Goal 9           |
 
 ## 20. Scope against the design diagram
 

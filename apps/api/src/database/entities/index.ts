@@ -5,12 +5,10 @@ import { Domain } from './domain.entity.js';
 import { EmailToken } from './email-token.entity.js';
 import { LinkDailyBreakdown } from './link-daily-breakdown.entity.js';
 import { LinkDailyTotal } from './link-daily-total.entity.js';
-import { LinkDailyVisitor } from './link-daily-visitor.entity.js';
 import { LinkVariant } from './link-variant.entity.js';
 import { Link } from './link.entity.js';
 import { Session } from './session.entity.js';
 import { User } from './user.entity.js';
-import { VisitorSalt } from './visitor-salt.entity.js';
 import { WorkspaceInvitation } from './workspace-invitation.entity.js';
 import { WorkspaceMember } from './workspace-member.entity.js';
 import { Workspace } from './workspace.entity.js';
@@ -30,7 +28,5 @@ export const entities = [
   ClickEvent,
   LinkDailyTotal,
   LinkDailyBreakdown,
-  LinkDailyVisitor,
-  VisitorSalt,
   AuditLogEntry,
 ];

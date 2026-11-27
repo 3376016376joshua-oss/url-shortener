@@ -6,6 +6,7 @@ import { isDatabaseUnavailable } from '../src/database/database-unavailable.js';
 import {
   Domain,
   DomainStatus,
+  SERVING_HOSTNAME_UNIQUE_INDEX,
 } from '../src/database/entities/domain.entity.js';
 import { LinkDailyTotal } from '../src/database/entities/link-daily-total.entity.js';
 import { LinkVariant } from '../src/database/entities/link-variant.entity.js';
@@ -211,6 +212,56 @@ describe('database schema', () => {
         .delete({ id: fixture.workspace.id });
 
       expect(await count('links')).toBe(0);
+    });
+  });
+
+  describe('domains', () => {
+    const claim = (workspaceId: string, status: DomainStatus) =>
+      dataSource.getRepository(Domain).save({
+        workspaceId,
+        hostname: 'go.brand.test',
+        status,
+        verificationToken: 'token',
+      });
+
+    it('lets two workspaces hold an unverified claim to the same host', async () => {
+      const other = await createWorkspaceFixture(app);
+      await claim(fixture.workspace.id, DomainStatus.Pending);
+
+      await expect(
+        claim(other.workspace.id, DomainStatus.Pending),
+      ).resolves.toBeDefined();
+    });
+
+    it('lets only one claim to a host be active, naming the index', async () => {
+      const other = await createWorkspaceFixture(app);
+      await claim(fixture.workspace.id, DomainStatus.Active);
+
+      await expect(
+        claim(other.workspace.id, DomainStatus.Active),
+      ).rejects.toMatchObject({
+        driverError: {
+          code: UNIQUE_VIOLATION,
+          constraint: SERVING_HOSTNAME_UNIQUE_INDEX,
+        },
+      });
+    });
+
+    it('keeps a blocked host from being activated by anyone else', async () => {
+      const other = await createWorkspaceFixture(app);
+      await claim(fixture.workspace.id, DomainStatus.Blocked);
+
+      await expect(
+        claim(other.workspace.id, DomainStatus.Active),
+      ).rejects.toMatchObject({ driverError: { code: UNIQUE_VIOLATION } });
+    });
+
+    it('rejects a second claim to a host by the same workspace', async () => {
+      await claim(fixture.workspace.id, DomainStatus.Pending);
+
+      await expect(
+        claim(fixture.workspace.id, DomainStatus.Pending),
+      ).rejects.toMatchObject({ driverError: { code: UNIQUE_VIOLATION } });
     });
   });
 

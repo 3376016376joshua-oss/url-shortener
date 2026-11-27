@@ -12,7 +12,7 @@
 	encode zstd gzip
 
 	# Operational endpoints are never public; they stay on the internal network.
-	@internal path /internal/* /metrics
+	@internal path /internal /internal/* /metrics /metrics/* /health /health/*
 	handle @internal {
 		respond 404
 	}

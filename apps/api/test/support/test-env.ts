@@ -19,6 +19,8 @@ const UNLIMITED = '1000000';
 
 export const testEnv = {
   NODE_ENV: 'test',
+  // No background work during tests: a test runs a job when it means to.
+  PROCESS_ROLE: 'web',
   DATABASE_URL: `${postgresServer}/${TEST_DATABASE_NAME}`,
   REDIS_URL: `redis://localhost:${redisPort}/${TEST_REDIS_DATABASE}`,
   APP_URL: 'http://app.shortener.test',
