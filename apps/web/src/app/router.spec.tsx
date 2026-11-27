@@ -1,20 +1,46 @@
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { cleanup, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { useLocation, useNavigate } from 'react-router';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import { useApiClient } from '../api/api-context.js';
-import { emptyResponse, errorResponse } from '../api/testing/fake-fetch.js';
+import { sessionQueryKey } from '../api/session.js';
+import {
+  emptyResponse,
+  errorResponse,
+  jsonResponse,
+} from '../api/testing/fake-fetch.js';
 import { PageHeader, QueryView } from '../ui/index.js';
 import type { Registry } from './registry/collect.js';
 import { leaveTo } from './session/leave-to.js';
-import { useLinkParams, useSession, useWorkspace } from './shell.js';
+import {
+  resolveNextPath,
+  useLinkParams,
+  useSession,
+  useWorkspace,
+} from './shell.js';
 import { renderApp, TEST_SESSION } from './testing/render-app.js';
 
 vi.mock('./session/leave-to.js', () => ({ leaveTo: vi.fn() }));
 
+/** Signs in the way the README tells the auth feature to. */
 function SignInPage() {
-  return <PageHeader title="Sign in" />;
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const finishSignIn = async () => {
+    await queryClient.invalidateQueries({ queryKey: sessionQueryKey });
+    await navigate(resolveNextPath(location.search));
+  };
+  return (
+    <>
+      <PageHeader title="Sign in" />
+      <button type="button" onClick={() => void finishSignIn()}>
+        Sign in
+      </button>
+    </>
+  );
 }
 
 function LinksPage() {
@@ -196,6 +222,27 @@ describe('the dashboard routes', () => {
     expect(
       screen.queryByRole('navigation', { name: 'Link sections' }),
     ).toBeNull();
+  });
+
+  it('opens the page the visitor was going to once they have signed in', async () => {
+    let signedIn = false;
+    const { router } = renderApp({
+      path: '/w/ws-1/links',
+      registry: REGISTRY,
+      handlers: {
+        'GET /me': () =>
+          signedIn
+            ? jsonResponse(TEST_SESSION)
+            : errorResponse(401, 'UNAUTHENTICATED', 'Sign in to continue'),
+      },
+    });
+    await heading('Sign in');
+
+    signedIn = true;
+    await userEvent.click(screen.getByRole('button', { name: 'Sign in' }));
+
+    await heading('Links of Acme');
+    expect(router.state.location.pathname).toBe('/w/ws-1/links');
   });
 
   it('ends the session when any request answers 401', async () => {

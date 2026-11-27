@@ -1,10 +1,16 @@
-import { useQuery } from '@tanstack/react-query';
-import { Link } from 'react-router';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link, useLocation, useNavigate } from 'react-router';
 import { z } from 'zod';
-import { useApiClient } from '../../../../src/api/api-context.js';
-import { paths, useSession, useWorkspace } from '../../../../src/app/shell.js';
+import { sessionQueryKey, useApiClient } from '../../../../src/api/index.js';
+import {
+  paths,
+  resolveNextPath,
+  useSession,
+  useWorkspace,
+} from '../../../../src/app/shell.js';
 import {
   Badge,
+  Button,
   ButtonLink,
   Card,
   DataTable,
@@ -21,10 +27,24 @@ const linkListSchema = z.object({
 });
 type ListedLink = z.infer<typeof linkListSchema>['items'][number];
 
+/**
+ * A stand-in for the real page. It ends the way the real one does: refresh
+ * the session, then go where the visitor was heading.
+ */
 export function SignInPage() {
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const location = useLocation();
+  const finishSignIn = async () => {
+    await queryClient.invalidateQueries({ queryKey: sessionQueryKey });
+    await navigate(resolveNextPath(location.search));
+  };
   return (
     <Card>
       <PageHeader title="Sign in" description="A stand-in for the real page." />
+      <Button variant="primary" onClick={() => void finishSignIn()}>
+        Continue
+      </Button>
     </Card>
   );
 }

@@ -17,10 +17,15 @@ export function RequireSession() {
 
   // A session that has loaded keeps the dashboard up when a later refresh
   // fails; a `401` clears it, which is what sends the visitor to sign in.
-  if (query.data === undefined) {
+  //
+  // "Signed out" is believed only as the latest answer. While it is being
+  // asked again, as it is right after signing in, the gate waits rather than
+  // send the visitor back to the page they just signed in on.
+  const isSettled = !query.isFetching && !query.isError;
+  if (query.data === undefined || (query.data === null && !isSettled)) {
     return (
       <main className={FULL_PAGE_CLASSES}>
-        {query.status === 'error' ? (
+        {query.isError && !query.isFetching ? (
           <ErrorState
             title="Your account could not be loaded"
             error={query.error}

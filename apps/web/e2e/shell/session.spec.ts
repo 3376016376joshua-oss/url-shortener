@@ -17,6 +17,22 @@ test.describe('session', () => {
     expect(url.searchParams.get('next')).toBe(`/w/${ACME}/links?status=ACTIVE`);
   });
 
+  test('after signing in, the visitor lands where they were going', async ({
+    page,
+    api,
+  }) => {
+    api.signedOut();
+    mockLinks(api, GLOBEX);
+    await page.goto(`/w/${GLOBEX}/links`);
+    await expect(page.getByRole('heading', { name: 'Sign in' })).toBeVisible();
+
+    api.signedIn();
+    await page.getByRole('button', { name: 'Continue' }).click();
+
+    await expect(page.getByRole('table', { name: 'Links' })).toBeVisible();
+    await expect(page).toHaveURL(`/w/${GLOBEX}/links`);
+  });
+
   test('the dashboard opens on the first section of the first workspace', async ({
     page,
     api,
