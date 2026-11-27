@@ -1,0 +1,109 @@
+# The production edge: the only public entry point (docs/PRD.md, sections 4,
+# 8, and 13). It terminates TLS, serves the dashboard and the management API
+# on the app host, and sends every other host to the redirect service.
+#
+# Mount it over the image's default configuration:
+#   deploy/Caddyfile.production -> /etc/caddy/Caddyfile
+# and keep /data on a persistent volume: it holds the certificates.
+#
+# Environment:
+#   APP_HOST      host of the dashboard and the API, the host part of APP_URL
+#   API_UPSTREAM  the API's web role on the internal network, e.g. api:3000
+#   ACME_EMAIL    contact address for the certificate authority
+#   ACME_CA       optional ACME directory; set it to Let's Encrypt's staging
+#                 directory while rehearsing, so mistakes cannot exhaust the
+#                 production rate limits
+{
+	admin off
+	email {$ACME_EMAIL}
+	acme_ca {$ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
+
+	# Before obtaining a certificate for a host it has none for, the edge asks
+	# the API whether that host is a platform host or a verified custom
+	# domain. Without this, anyone could point a name at the platform and make
+	# it request certificates until the authority's rate limits locked it out.
+	on_demand_tls {
+		ask http://{$API_UPSTREAM}/internal/tls/authorize
+	}
+}
+
+# Operational endpoints are never public; they stay on the internal network.
+(private_endpoints) {
+	@internal path /internal /internal/* /metrics /metrics/* /health /health/*
+	handle @internal {
+		respond 404
+	}
+}
+
+(common_headers) {
+	header {
+		Strict-Transport-Security "max-age=31536000"
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+}
+
+# The app host: the dashboard and the management API.
+{$APP_HOST} {
+	encode zstd gzip
+	import common_headers
+	import private_endpoints
+
+	handle /api/* {
+		reverse_proxy {$API_UPSTREAM}
+	}
+	handle {
+		header {
+			# The dashboard loads only its own scripts and talks only to its
+			# own origin. Charts set inline styles; QR previews are data and
+			# blob images.
+			Content-Security-Policy "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; object-src 'none'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'"
+			X-Frame-Options DENY
+		}
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+
+	log
+}
+
+# Any other host is a short domain: the platform's own or a customer's. Its
+# certificate is obtained on the first request, if the API allows it. Short
+# domains only redirect; the management API is not served on them.
+https:// {
+	tls {
+		on_demand
+	}
+	import common_headers
+	import private_endpoints
+
+	@management path /api/*
+	handle @management {
+		respond 404
+	}
+	handle {
+		reverse_proxy {$API_UPSTREAM}
+	}
+
+	# Visitors are never identified: the access log of a short domain carries
+	# no client address, and no request headers, which is where a forwarded
+	# address, a user agent, a referrer, or a cookie would appear.
+	log {
+		format filter {
+			wrap json
+			fields {
+				request>remote_ip delete
+				request>remote_port delete
+				request>client_ip delete
+				request>headers delete
+			}
+		}
+	}
+}
+
+# Plain HTTP is only ever a step towards HTTPS, on every host.
+http:// {
+	redir https://{host}{uri} 308
+}
