@@ -57,11 +57,16 @@ Run these from the repository root; they cover every package.
 | `pnpm build`                        | Build every package                                     |
 | `pnpm test`                         | Unit tests (`**/src/**/*.spec.ts(x)`)                   |
 | `pnpm test:e2e`                     | API end-to-end tests (`apps/api/test/**/*.e2e-spec.ts`) |
+| `pnpm test:web:e2e`                 | Dashboard browser tests (`apps/web/e2e/**/*.spec.ts`)   |
 
 End-to-end tests run the whole API against the Postgres and Redis from Docker Compose.
 They use their own database (`shortener_test`, rebuilt from the migrations on every run) and their own Redis logical database, so they never touch development data.
 They honour the same `POSTGRES_PORT` and `REDIS_PORT` overrides as Compose.
 A run holds a lock in Postgres from start to finish, so two runs against the same Postgres take turns instead of interfering.
+
+Dashboard browser tests run in Chromium through Playwright and need no running stack: they build the dashboard and answer the API themselves.
+Install the browser once with `pnpm --filter @url-shortener/web exec playwright install chromium`.
+How the dashboard is put together, and how a feature plugs into it, is in [apps/web/src/app/README.md](apps/web/src/app/README.md).
 
 ### Several checkouts on one machine
 
