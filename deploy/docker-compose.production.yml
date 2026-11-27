@@ -1,0 +1,235 @@
+# The production stack on one Linux host (docs/PRD.md section 13, and the
+# runbook in docs/operations.md). From the repository root:
+#
+#   cp deploy/production.env.example deploy/production.env   # then fill it in
+#   docker compose --env-file deploy/production.env \
+#     --file deploy/docker-compose.production.yml up --detach --wait
+#
+# Postgres is a managed service by default: DATABASE_URL points at it. To run
+# Postgres on this host instead, with WAL archiving, add `--profile postgres`.
+#
+# Only the edge publishes ports. The API, Redis, and Postgres are reachable
+# on the internal network alone, which is also where Prometheus scrapes
+# /metrics from.
+
+name: shortener
+
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: 50m
+    max-file: '5'
+
+x-api: &api
+  image: ${API_IMAGE:-shortener-api:local}
+  build:
+    context: ..
+    target: api
+  restart: unless-stopped
+  networks: [internal]
+  logging: *logging
+  environment: &api-environment
+    NODE_ENV: production
+    DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+    REDIS_URL: redis://redis:6379
+    APP_URL: ${APP_URL:?set APP_URL}
+    DEFAULT_SHORT_DOMAIN: ${DEFAULT_SHORT_DOMAIN:?set DEFAULT_SHORT_DOMAIN}
+    CNAME_TARGET: ${CNAME_TARGET:?set CNAME_TARGET}
+    APP_SECRET: ${APP_SECRET:?set APP_SECRET}
+    SMTP_URL: ${SMTP_URL:?set SMTP_URL}
+    MAIL_FROM: ${MAIL_FROM:?set MAIL_FROM}
+    # The edge is the one proxy in front of the API.
+    TRUST_PROXY_HOPS: 1
+    # A missing file is tolerated: clicks are then recorded without a country.
+    GEOIP_DB_PATH: /geoip/country.mmdb
+    BLOCKED_HOSTS: ${BLOCKED_HOSTS:-}
+    RATE_LIMIT_REDIRECT_PER_MINUTE: ${RATE_LIMIT_REDIRECT_PER_MINUTE:-600}
+    RATE_LIMIT_API_PER_MINUTE: ${RATE_LIMIT_API_PER_MINUTE:-300}
+    RATE_LIMIT_CREDENTIAL_PER_MINUTE: ${RATE_LIMIT_CREDENTIAL_PER_MINUTE:-600}
+    RATE_LIMIT_AUTH_PER_MINUTE: ${RATE_LIMIT_AUTH_PER_MINUTE:-10}
+  volumes:
+    - ${GEOIP_DIR:-./geoip}:/geoip:ro
+
+x-api-healthcheck: &api-healthcheck
+  # Readiness stays 200 with one dependency down, so a Redis or Postgres
+  # outage never takes the replicas that can still serve out of rotation.
+  test:
+    ['CMD', 'wget', '--quiet', '--spider', 'http://127.0.0.1:3000/health/ready']
+  interval: 10s
+  timeout: 3s
+  start_period: 30s
+  start_interval: 1s
+  retries: 3
+
+services:
+  # The only public entry point: TLS, the dashboard, and routing by host.
+  edge:
+    image: ${EDGE_IMAGE:-shortener-edge:local}
+    build:
+      context: ..
+      target: edge
+    restart: unless-stopped
+    environment:
+      APP_HOST: ${APP_HOST:?set APP_HOST}
+      API_UPSTREAM: api-web:3000
+      ACME_EMAIL: ${ACME_EMAIL:-}
+    ports:
+      - '${EDGE_HTTP_PORT:-80}:80'
+      - '${EDGE_HTTPS_PORT:-443}:443'
+      - '${EDGE_HTTPS_PORT:-443}:443/udp'
+    volumes:
+      - ${EDGE_CADDYFILE:-./Caddyfile.production}:/etc/caddy/Caddyfile:ro
+      # Certificates and ACME account keys. Losing it only costs re-issuance.
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [public, internal]
+    logging: *logging
+    depends_on:
+      api-web:
+        condition: service_healthy
+
+  # Applies pending migrations once per release, before the new version starts.
+  migrate:
+    <<: *api
+    restart: 'no'
+    command: ['node', 'dist/database/run-migrations.js']
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+
+  # Serves HTTP: redirects and the management API. Stateless, so it scales.
+  api-web:
+    <<: *api
+    environment:
+      <<: *api-environment
+      PROCESS_ROLE: web
+    deploy:
+      replicas: ${WEB_REPLICAS:-2}
+    healthcheck: *api-healthcheck
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  # Runs the click consumer and the scheduled jobs. Each job takes a Postgres
+  # advisory lock, so more than one worker never runs a job twice at once.
+  api-worker:
+    <<: *api
+    environment:
+      <<: *api-environment
+      PROCESS_ROLE: worker
+    deploy:
+      replicas: ${WORKER_REPLICAS:-1}
+    healthcheck: *api-healthcheck
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis:
+        condition: service_healthy
+
+  redis:
+    image: redis:8-alpine
+    restart: unless-stopped
+    # Only keys with a TTL are evicted: cache entries make room under
+    # pressure and the click stream is never dropped. The append-only file,
+    # synced every second, bounds the loss on a crash to about a second.
+    command:
+      - redis-server
+      - --appendonly
+      - 'yes'
+      - --appendfsync
+      - everysec
+      - --maxmemory
+      - ${REDIS_MAXMEMORY:-512mb}
+      - --maxmemory-policy
+      - volatile-lru
+    volumes:
+      - redis-data:/data
+    networks: [internal]
+    logging: *logging
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Optional (`--profile postgres`): Postgres on this host, archiving its WAL
+  # so it can be restored to a point in time. Point WAL_ARCHIVE_DIR at
+  # storage that is not this host's disk.
+  postgres:
+    profiles: [postgres]
+    image: postgres:18-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: shortener
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_DB: shortener
+    command:
+      - postgres
+      - -c
+      - wal_level=replica
+      - -c
+      - archive_mode=on
+      - -c
+      # Never overwrites a segment that is already archived.
+      - archive_command=test ! -f /wal-archive/%f && cp %p /wal-archive/%f
+      - -c
+      # Bounds what a lost host can cost to 5 minutes of writes.
+      - archive_timeout=300
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ${WAL_ARCHIVE_DIR:-wal-archive}:/wal-archive
+    networks: [internal]
+    logging: *logging
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready --username shortener --dbname shortener']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    depends_on:
+      wal-archive-init:
+        condition: service_completed_successfully
+
+  # A fresh volume belongs to root; Postgres must be able to write to it.
+  wal-archive-init:
+    profiles: [postgres]
+    image: postgres:18-alpine
+    user: root
+    restart: 'no'
+    entrypoint: ['chown', 'postgres:postgres', '/wal-archive']
+    volumes:
+      - ${WAL_ARCHIVE_DIR:-wal-archive}:/wal-archive
+    network_mode: none
+
+  # Not a running service (`--profile tools`): the Postgres client tools at
+  # the server's version, for deploy/scripts. See docs/operations.md.
+  #   ... --profile tools run --rm backup
+  #   ... --profile tools run --rm backup /scripts/restore.sh <file>
+  backup:
+    profiles: [tools]
+    image: postgres:18-alpine
+    restart: 'no'
+    entrypoint: ['/bin/sh']
+    command: ['/scripts/backup.sh']
+    environment:
+      DATABASE_URL: ${DATABASE_URL:?set DATABASE_URL}
+      RESTORE_DATABASE_URL: ${RESTORE_DATABASE_URL:-}
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - ./scripts:/scripts:ro
+      # Point BACKUP_DIR at storage that is not the database host's disk.
+      - ${BACKUP_DIR:-./backups}:/backups
+    networks: [internal]
+
+networks:
+  public:
+  internal:
+
+volumes:
+  caddy-data:
+  caddy-config:
+  redis-data:
+  postgres-data:
+  wal-archive:

@@ -1,0 +1,4 @@
+# Local production configuration and data: secrets, dumps, and databases.
+production.env
+backups/
+geoip/
